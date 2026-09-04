@@ -1,0 +1,10 @@
+{% extends "base.html" %}
+{% block title %}Dashboard · MediaFlow{% endblock %}
+{% block content %}
+<header class="page-header"><div><p class="eyebrow">THIS WEEK</p><h1>Your media plan</h1></div><form action="{% url 'build_schedule' %}" method="post">{% csrf_token %}<button>Build my schedule</button></form></header>
+<div class="grid">
+  <section class="card wide"><div class="card-head"><h2>Scheduled sessions</h2></div>{% for session in sessions %}<article class="session"><div><strong>{{ session.media_item.title }}</strong><small>{{ session.media_item.get_media_type_display }}</small></div><time>{{ session.starts_at|date:"D, M j · g:i A" }}–{{ session.ends_at|date:"g:i A" }}</time></article>{% empty %}<p class="empty">No sessions yet. Add availability and backlog items, then build your schedule.</p>{% endfor %}</section>
+  <section class="card"><div class="card-head"><h2>Backlog</h2><a href="{% url 'add_media' %}">+ Add</a></div>{% for item in items %}<article><strong>{{ item.title }}</strong><small>{{ item.get_media_type_display }} · {{ item.remaining_minutes }} min left · Priority {{ item.priority }}</small></article>{% empty %}<p class="empty">Your backlog is empty.</p>{% endfor %}</section>
+  <section class="card"><div class="card-head"><h2>Weekly availability</h2><a href="{% url 'add_availability' %}">+ Add</a></div>{% for window in availability %}<article><strong>{{ window.get_weekday_display }}</strong><small>{{ window.start_time|time:"g:i A" }}–{{ window.end_time|time:"g:i A" }}</small></article>{% empty %}<p class="empty">Add time windows when you are free.</p>{% endfor %}</section>
+  <section class="card"><div class="card-head"><h2>Commitments</h2><a href="{% url 'add_commitment' %}">+ Add</a></div>{% for commitment in commitments %}<article><strong>{{ commitment.title }}</strong><small>{{ commitment.starts_at|date:"D, M j · g:i A" }}</small></article>{% empty %}<p class="empty">No upcoming commitments.</p>{% endfor %}</section>
+</div>{% endblock %}

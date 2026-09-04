@@ -1,0 +1,2 @@
+{% extends "base.html" %}
+{% block content %}<section class="form-card"><h1>Add details</h1><form method="post">{% csrf_token %}{{ form.as_p }}<button>Save</button> <a href="{% url 'dashboard' %}">Cancel</a></form></section>{% endblock %}
