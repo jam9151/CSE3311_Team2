@@ -1,0 +1,131 @@
+/* Tailwind source. Edit this, not static/css/app.css -- that one is built.
+   npm run css        rebuilds on save while you work
+   npm run build:css  one-off minified build before committing */
+
+@import "tailwindcss";
+
+/* Only the Django templates use classes. Without this it would also crawl
+   the venv, which is slow and pulls in junk. */
+@source not "../../venv";
+@source not "../../.venv";
+@source "../../templates";
+
+@theme {
+  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+
+  --color-bg: #0e1116;
+  --color-surface: #171b23;
+  --color-surface-2: #1f242e;
+  --color-line: #2a313d;
+  --color-ink: #e7ebf2;
+  --color-muted: #98a2b3;
+  --color-accent: #6ea8fe;
+  --color-on-accent: #0b1020;
+  --color-good: #5fd4a0;
+  --color-warn: #f2c14e;
+  --color-bad: #f2777a;
+
+  /* one colour per media type, used by the pills */
+  --color-movie: #f0a6ca;
+  --color-tv: #a6c8f0;
+  --color-book: #f2c14e;
+  --color-game: #5fd4a0;
+}
+
+/* Django renders form fields itself ({{ form.as_p }}), so we can't put
+   classes on the inputs. Style the bare elements instead. */
+@layer base {
+  body {
+    @apply bg-bg text-ink text-[15px] leading-relaxed;
+  }
+  a {
+    @apply text-accent hover:underline;
+  }
+  label {
+    @apply mb-1 block text-sm text-muted;
+  }
+  input:where([type="text"], [type="email"], [type="password"], [type="number"],
+    [type="time"], [type="date"], [type="datetime-local"]),
+  select,
+  textarea {
+    @apply w-full rounded-lg border border-line bg-bg px-2.5 py-2 text-sm text-ink
+      focus:border-accent focus:outline-2 focus:outline-accent/20;
+  }
+  /* time pickers are unreadable in dark mode otherwise */
+  input, select {
+    color-scheme: dark;
+  }
+  form p {
+    @apply mb-4;
+  }
+  .helptext {
+    @apply mt-1 block text-xs text-muted;
+  }
+  ul.errorlist {
+    @apply my-1 list-disc pl-4 text-sm text-bad;
+  }
+}
+
+/* Things used on nearly every page. Anything one-off stays as utilities in
+   the template. */
+@layer components {
+  .btn {
+    @apply inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-transparent
+      bg-accent px-3.5 py-2 text-sm font-semibold text-on-accent
+      hover:no-underline hover:brightness-110;
+  }
+  .btn-secondary {
+    @apply border-line bg-surface-2 text-ink;
+  }
+  .btn-ghost {
+    @apply border-line bg-transparent text-muted hover:text-ink;
+  }
+  .btn-danger {
+    @apply border-line bg-transparent text-bad;
+  }
+  .btn-sm {
+    @apply px-2.5 py-1 text-xs;
+  }
+  .btn-link {
+    @apply cursor-pointer border-0 bg-transparent p-0 text-sm text-muted underline hover:text-ink;
+  }
+
+  .card {
+    @apply rounded-xl border border-line bg-surface p-4 shadow-lg shadow-black/20;
+  }
+  .card-head {
+    @apply mb-3 flex items-center justify-between gap-3;
+  }
+  .card-head h2 {
+    @apply text-lg font-semibold;
+  }
+
+  .eyebrow {
+    @apply mb-1 text-[0.7rem] font-semibold uppercase tracking-widest text-muted;
+  }
+  .empty {
+    @apply rounded-lg border border-dashed border-line p-3.5 text-sm text-muted;
+  }
+  .row {
+    @apply flex items-center justify-between gap-3 border-b border-line py-2.5 last:border-0 last:pb-0;
+  }
+
+  .pill {
+    @apply inline-block rounded-full border border-line bg-surface-2 px-2 py-0.5
+      text-[0.7rem] font-semibold tracking-wide text-muted;
+  }
+  /* Picked with pill-{{ media_type }} in templates. Tailwind can't see a
+     class built like that, which is fine because these are plain CSS. */
+  .pill-movie { @apply border-movie/30 text-movie; }
+  .pill-tv { @apply border-tv/30 text-tv; }
+  .pill-book { @apply border-book/30 text-book; }
+  .pill-game { @apply border-game/30 text-game; }
+  .pill-accent { @apply border-accent/35 bg-accent/15 text-accent; }
+
+  .nav-link {
+    @apply rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-ink hover:no-underline;
+  }
+  .nav-link-active {
+    @apply bg-accent/15 text-accent;
+  }
+}

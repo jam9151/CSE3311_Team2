@@ -1,0 +1,23 @@
+{
+  "name": "mediaflow",
+  "version": "1.0.0",
+  "description": "Tailwind build for the MediaFlow Django app",
+  "scripts": {
+    "css": "tailwindcss -i static/src/app.css -o static/css/app.css --watch",
+    "build:css": "tailwindcss -i static/src/app.css -o static/css/app.css --minify"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/jam9151/CSE3311_Team2.git"
+  },
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/jam9151/CSE3311_Team2/issues"
+  },
+  "homepage": "https://github.com/jam9151/CSE3311_Team2#readme",
+  "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
+    "tailwindcss": "^4.3.3"
+  },
+  "private": true
+}

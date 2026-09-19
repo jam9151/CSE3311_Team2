@@ -34,6 +34,25 @@ Signing up for real needs a `@mavs.uta.edu` address. Admin is at `/admin/`
 
 Tests: `python manage.py test`
 
+## Styles (Tailwind)
+
+The CSS is built with Tailwind. The built file, `static/css/app.css`, is
+committed, so you only need Node if you're changing how things look.
+
+```powershell
+npm install
+npm run css          # rebuilds on save while you work on templates
+npm run build:css    # minified build, run this before committing
+```
+
+Edit `static/src/app.css`, never `static/css/app.css` directly, because the
+next build overwrites it. The colours live in the `@theme` block there
+(`bg-surface`, `text-muted`, `border-line` and so on), and the shared bits
+like `.btn`, `.card` and `.pill` are defined there too.
+
+If you add a Tailwind class to a template and it doesn't show up, the CSS
+probably hasn't been rebuilt yet.
+
 ## Where we are on the feature list
 
 | Feature | Status |
@@ -83,8 +102,9 @@ planner/
   tests.py      27 tests, mostly on the scheduling
   management/commands/seed_catalog.py
 templates/
-static/css/
+static/src/app.css   Tailwind source (edit this)
+static/css/app.css   built output (don't edit)
 ```
 
-No JS framework and no build step. Only dependency is Django, which should keep
-the dependency-deprecation risk from the inception deck to about zero.
+No JS framework. Running the app only needs Django. Tailwind is a dev-only
+dependency for rebuilding the CSS.

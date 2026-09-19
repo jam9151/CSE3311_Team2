@@ -2,45 +2,45 @@
 {% block title %}Reviews · MediaFlow{% endblock %}
 
 {% block content %}
-<header class="page-header">
-  <div>
-    <p class="eyebrow">Reviews</p>
-    <h1>What you have finished</h1>
-    <p class="lede">A record of the things you got to, and what you thought of them.</p>
-  </div>
+<header class="mb-5">
+  <p class="eyebrow">Reviews</p>
+  <h1 class="text-3xl font-bold tracking-tight">What you've finished</h1>
+  <p class="text-muted">Everything you got to, and what you thought of it.</p>
 </header>
 
 {% if awaiting %}
-  <section class="card" style="margin-bottom:1.25rem">
-    <div class="card-head"><h2>Finished, not yet reviewed</h2></div>
+  <section class="card mb-5">
+    <div class="card-head"><h2>Finished, not reviewed yet</h2></div>
     {% for item in awaiting %}
       <div class="row">
         <div>
           <strong>{{ item.title }}</strong>
-          <small><span class="pill {{ item.media_type }}">{{ item.get_media_type_display }}</span>
-            finished {{ item.completed_at|date:"M j, Y"|default:"recently" }}</small>
+          <p class="text-xs text-muted">
+            <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
+            finished {{ item.completed_at|date:"M j, Y"|default:"recently" }}
+          </p>
         </div>
-        <a class="button small secondary" href="{% url 'write_review' item.pk %}">Write a review</a>
+        <a class="btn btn-sm btn-secondary" href="{% url 'write_review' item.pk %}">Write a review</a>
       </div>
     {% endfor %}
   </section>
 {% endif %}
 
-<div class="media-grid">
+<div class="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
   {% for review in reviews %}
-    <article class="media-card">
-      <div>
-        <span class="pill {{ review.backlog_item.media_type }}">{{ review.backlog_item.get_media_type_display }}</span>
+    <article class="card flex flex-col gap-2">
+      <div><span class="pill pill-{{ review.backlog_item.media_type }}">{{ review.backlog_item.get_media_type_display }}</span></div>
+      <h3 class="font-semibold">{{ review.backlog_item.title }}</h3>
+      <div class="tracking-widest text-warn">
+        {% for _ in review.star_range %}&#9733;{% endfor %}<span class="text-sm tracking-normal text-muted"> {{ review.rating }}/5</span>
       </div>
-      <h3>{{ review.backlog_item.title }}</h3>
-      <div class="stars">{% for _ in review.star_range %}&#9733;{% endfor %}<span class="meta"> {{ review.rating }}/5</span></div>
-      {% if review.body %}<p class="meta">{{ review.body }}</p>{% endif %}
-      <div class="spacer"></div>
-      <p class="meta">{{ review.created_at|date:"M j, Y" }} &middot;
-        <a href="{% url 'write_review' review.backlog_item.pk %}">Edit</a></p>
+      {% if review.body %}<p class="text-sm text-muted">{{ review.body }}</p>{% endif %}
+      <p class="mt-auto text-xs text-muted">
+        {{ review.created_at|date:"M j, Y" }} &middot; <a href="{% url 'write_review' review.backlog_item.pk %}">Edit</a>
+      </p>
     </article>
   {% empty %}
-    <p class="empty">No reviews yet. Finish something and it will show up here.</p>
+    <p class="empty sm:col-span-2 lg:col-span-3">No reviews yet. Finish something and it'll show up here.</p>
   {% endfor %}
 </div>
 {% endblock %}

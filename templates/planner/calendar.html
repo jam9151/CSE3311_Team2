@@ -2,37 +2,43 @@
 {% block title %}Calendar · MediaFlow{% endblock %}
 
 {% block content %}
-<header class="page-header">
+<header class="mb-5 flex flex-wrap items-end justify-between gap-4">
   <div>
     <p class="eyebrow">Calendar</p>
-    <h1>{{ anchor|date:"F Y" }}</h1>
+    <h1 class="text-3xl font-bold tracking-tight">{{ anchor|date:"F Y" }}</h1>
   </div>
-  <div class="actions">
-    <a class="button small secondary" href="?year={{ previous_month.year }}&month={{ previous_month.month }}&date={{ selected|date:'Y-m-d' }}">&larr; Prev</a>
-    <a class="button small secondary" href="{% url 'calendar' %}">Today</a>
-    <a class="button small secondary" href="?year={{ next_month.year }}&month={{ next_month.month }}&date={{ selected|date:'Y-m-d' }}">Next &rarr;</a>
+  <div class="flex gap-2">
+    <a class="btn btn-sm btn-secondary" href="?year={{ previous_month.year }}&month={{ previous_month.month }}&date={{ selected|date:'Y-m-d' }}">&larr; Prev</a>
+    <a class="btn btn-sm btn-secondary" href="{% url 'calendar' %}">Today</a>
+    <a class="btn btn-sm btn-secondary" href="?year={{ next_month.year }}&month={{ next_month.month }}&date={{ selected|date:'Y-m-d' }}">Next &rarr;</a>
   </div>
 </header>
 
-<div class="split">
-  <section class="card">
-    <table class="calendar">
+<div class="grid items-start gap-5 lg:grid-cols-[3fr_2fr]">
+  <section class="card overflow-x-auto">
+    <table class="w-full min-w-[520px] table-fixed border-collapse">
       <thead>
-        <tr>{% for name in weekday_names %}<th>{{ name }}</th>{% endfor %}</tr>
+        <tr>
+          {% for name in weekday_names %}
+            <th class="pb-2 text-[0.7rem] font-semibold uppercase tracking-wider text-muted">{{ name }}</th>
+          {% endfor %}
+        </tr>
       </thead>
       <tbody>
         {% for week in weeks %}
           <tr>
             {% for cell in week %}
-              <td>
-                <a class="cal-day{% if not cell.in_month %} muted{% endif %}{% if cell.is_today %} today{% endif %}{% if cell.date == selected %} selected{% endif %}"
-                   href="?year={{ anchor.year }}&month={{ anchor.month }}&date={{ cell.date|date:'Y-m-d' }}">
-                  <span class="num">{{ cell.date|date:"j" }}</span>
+              <td class="h-22 border border-line p-0 align-top">
+                <a href="?year={{ anchor.year }}&month={{ anchor.month }}&date={{ cell.date|date:'Y-m-d' }}"
+                   class="block h-full p-1.5 text-xs text-ink hover:bg-surface-2 hover:no-underline
+                          {% if cell.date == selected %}bg-accent/15 ring-1 ring-accent ring-inset{% endif %}">
+                  <span class="font-semibold tabular-nums
+                    {% if cell.is_today %}text-accent{% elif not cell.in_month %}text-muted/50{% endif %}">{{ cell.date|date:"j" }}</span>
                   {% for suggestion in cell.planned|slice:":2" %}
-                    <span class="cal-entry">{{ suggestion.backlog_item.title }}</span>
+                    <span class="mt-1 block truncate rounded border-l-2 border-good bg-surface-2 px-1 py-px text-[0.68rem]">{{ suggestion.backlog_item.title }}</span>
                   {% endfor %}
                   {% if cell.planned|length > 2 %}
-                    <span class="cal-more">+{{ cell.planned|length|add:"-2" }} more</span>
+                    <span class="mt-1 block text-[0.65rem] text-muted">+{{ cell.planned|length|add:"-2" }} more</span>
                   {% endif %}
                 </a>
               </td>
@@ -43,42 +49,42 @@
     </table>
   </section>
 
-  <div>
-    <section class="card" style="margin-bottom:1rem">
+  <div class="space-y-4">
+    <section class="card">
       <div class="card-head">
         <h2>{{ selected|date:"l, F j" }}</h2>
-        <span class="pill accent">{{ free_label }} free</span>
+        <span class="pill pill-accent">{{ free_label }} free</span>
       </div>
 
-      <ul class="timeline">
+      <ul class="text-sm">
         {% for block in plan.busy %}
-          <li>
-            <span class="time">{{ block.start|time:"g:i A" }}–{{ block.end|time:"g:i A" }}</span>
-            <span class="busy-label">{{ block.label }}</span>
+          <li class="row">
+            <span class="w-32 shrink-0 text-xs tabular-nums text-muted">{{ block.start|time:"g:i A" }}–{{ block.end|time:"g:i A" }}</span>
+            <span class="flex-1 text-muted">{{ block.label }}</span>
           </li>
         {% endfor %}
         {% for entry in plan.planned %}
-          <li>
-            <span class="time">{{ entry.start_time|time:"g:i A" }}–{{ entry.end_time|time:"g:i A" }}</span>
-            <span><strong>{{ entry.backlog_item.title }}</strong></span>
+          <li class="row">
+            <span class="w-32 shrink-0 text-xs tabular-nums text-muted">{{ entry.start_time|time:"g:i A" }}–{{ entry.end_time|time:"g:i A" }}</span>
+            <strong class="flex-1">{{ entry.backlog_item.title }}</strong>
           </li>
         {% endfor %}
         {% for gap in plan.free %}
-          <li>
-            <span class="time">{{ gap.start|time:"g:i A" }}–{{ gap.end|time:"g:i A" }}</span>
-            <span class="free">Free &middot; {{ gap.minutes }} min</span>
+          <li class="row">
+            <span class="w-32 shrink-0 text-xs tabular-nums text-muted">{{ gap.start|time:"g:i A" }}–{{ gap.end|time:"g:i A" }}</span>
+            <span class="flex-1 text-good">Free &middot; {{ gap.minutes }} min</span>
           </li>
         {% endfor %}
         {% if not plan.busy and not plan.planned and not plan.free %}
-          <li><span class="busy-label">Nothing scheduled, and no free time recorded.</span></li>
+          <li class="row text-muted">Nothing scheduled, and no free time recorded.</li>
         {% endif %}
       </ul>
 
-      <form method="post" action="{% url 'refresh_suggestions' %}" style="margin-top:1rem">
+      <form class="mt-4" method="post" action="{% url 'refresh_suggestions' %}">
         {% csrf_token %}
         <input type="hidden" name="date" value="{{ selected|date:'Y-m-d' }}">
         <input type="hidden" name="next" value="{% url 'calendar' %}?date={{ selected|date:'Y-m-d' }}">
-        <button class="secondary small">Suggest something for this day</button>
+        <button class="btn btn-sm btn-secondary">Suggest something for this day</button>
       </form>
     </section>
 

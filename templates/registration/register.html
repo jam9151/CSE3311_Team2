@@ -2,15 +2,15 @@
 {% block title %}Create account · MediaFlow{% endblock %}
 
 {% block content %}
-<section class="form-card card">
+<section class="card mx-auto my-8 max-w-md">
   <p class="eyebrow">UTA students only</p>
-  <h1>Create your account</h1>
-  <p class="meta" style="margin-bottom:1.25rem">Sign up with your @mavs.uta.edu address.</p>
+  <h1 class="text-2xl font-bold tracking-tight">Create your account</h1>
+  <p class="mb-5 text-sm text-muted">Sign up with your @mavs.uta.edu address.</p>
   <form method="post">
     {% csrf_token %}
     {{ form.as_p }}
-    <button>Get started</button>
+    <button class="btn">Get started</button>
   </form>
-  <p class="meta" style="margin-top:1rem">Already have one? <a href="{% url 'login' %}">Sign in</a>.</p>
+  <p class="mt-4 text-sm text-muted">Already have one? <a href="{% url 'login' %}">Sign in</a>.</p>
 </section>
 {% endblock %}

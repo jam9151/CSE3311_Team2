@@ -2,57 +2,54 @@
 {% block title %}Today · MediaFlow{% endblock %}
 
 {% block content %}
-<header class="page-header">
+<header class="mb-5 flex flex-wrap items-end justify-between gap-4">
   <div>
     <p class="eyebrow">{% now "l, F j" %}</p>
-    <h1>What should I start tonight?</h1>
+    <h1 class="text-3xl font-bold tracking-tight">What should I start tonight?</h1>
   </div>
   <form method="post" action="{% url 'refresh_suggestions' %}">
     {% csrf_token %}
     <input type="hidden" name="next" value="{% url 'dashboard' %}">
-    <button>Suggest something</button>
+    <button class="btn">Suggest something</button>
   </form>
 </header>
 
 {% if needs_schedule %}
-  <div class="message">
-    We cannot find your free time yet. <a href="{% url 'weekly_schedule' %}">Tell us when you are busy</a> and the rest follows.
+  <div class="mb-5 rounded-lg border border-accent/30 bg-accent/10 px-3.5 py-2.5 text-sm">
+    We can't find your free time yet. <a href="{% url 'weekly_schedule' %}">Tell us when you're busy</a> and the rest follows.
   </div>
 {% endif %}
 
-<div class="stat-row">
-  <div class="stat">
-    <div class="value">{{ free_label }}</div>
-    <div class="label">Free today</div>
+<div class="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+  <div class="card">
+    <div class="text-2xl font-bold tracking-tight">{{ free_label }}</div>
+    <div class="text-xs uppercase tracking-wider text-muted">Free today</div>
   </div>
-  <div class="stat">
-    <div class="value">{% if longest_gap %}{{ longest_gap.label }}{% else %}&mdash;{% endif %}</div>
-    <div class="label">Longest gap</div>
+  <div class="card">
+    <div class="text-2xl font-bold tracking-tight">{% if longest_gap %}{{ longest_gap.label }}{% else %}&mdash;{% endif %}</div>
+    <div class="text-xs uppercase tracking-wider text-muted">Longest gap</div>
   </div>
-  <div class="stat">
-    <div class="value">{{ backlog_count }}</div>
-    <div class="label">In your backlog</div>
+  <div class="card">
+    <div class="text-2xl font-bold tracking-tight">{{ backlog_count }}</div>
+    <div class="text-xs uppercase tracking-wider text-muted">In your backlog</div>
   </div>
-  <div class="stat">
-    <div class="value">{{ plan.planned|length }}</div>
-    <div class="label">Planned today</div>
+  <div class="card">
+    <div class="text-2xl font-bold tracking-tight">{{ plan.planned|length }}</div>
+    <div class="text-xs uppercase tracking-wider text-muted">Planned today</div>
   </div>
 </div>
 
-<div class="split">
-  <div>
-    <section class="card" style="margin-bottom:1rem">
+<div class="grid items-start gap-5 lg:grid-cols-[3fr_2fr]">
+  <div class="space-y-4">
+    <section class="card">
       <div class="card-head">
         <h2>Suggestions for today</h2>
-        <a href="{% url 'calendar' %}">Open calendar</a>
+        <a class="text-sm" href="{% url 'calendar' %}">Open calendar</a>
       </div>
-
       {% for suggestion in plan.pending %}
         {% include "planner/_suggestion.html" with suggestion=suggestion next_url="/dashboard/" %}
       {% empty %}
-        <p class="empty">
-          No open suggestions. Press <strong>Suggest something</strong> and we will look at the gaps in your day.
-        </p>
+        <p class="empty">No open suggestions. Hit <strong>Suggest something</strong> and we'll look at the gaps in your day.</p>
       {% endfor %}
     </section>
 
@@ -66,45 +63,47 @@
     </section>
   </div>
 
-  <div>
-    <section class="card" style="margin-bottom:1rem">
+  <div class="space-y-4">
+    <section class="card">
       <div class="card-head">
         <h2>Your day</h2>
-        <a href="{% url 'weekly_schedule' %}">Edit</a>
+        <a class="text-sm" href="{% url 'weekly_schedule' %}">Edit</a>
       </div>
-      <ul class="timeline">
+      <ul class="text-sm">
         {% for block in plan.busy %}
-          <li>
-            <span class="time">{{ block.start|time:"g:i A" }}–{{ block.end|time:"g:i A" }}</span>
-            <span class="busy-label">{{ block.label }}</span>
+          <li class="row">
+            <span class="w-32 shrink-0 text-xs tabular-nums text-muted">{{ block.start|time:"g:i A" }}–{{ block.end|time:"g:i A" }}</span>
+            <span class="flex-1 text-muted">{{ block.label }}</span>
           </li>
         {% endfor %}
         {% for gap in plan.free %}
-          <li>
-            <span class="time">{{ gap.start|time:"g:i A" }}–{{ gap.end|time:"g:i A" }}</span>
-            <span class="free">Free &middot; {{ gap.minutes }} min</span>
+          <li class="row">
+            <span class="w-32 shrink-0 text-xs tabular-nums text-muted">{{ gap.start|time:"g:i A" }}–{{ gap.end|time:"g:i A" }}</span>
+            <span class="flex-1 text-good">Free &middot; {{ gap.minutes }} min</span>
           </li>
         {% empty %}
-          <li><span class="busy-label">No free time left today.</span></li>
+          <li class="row text-muted">No free time left today.</li>
         {% endfor %}
       </ul>
     </section>
 
-    <section class="card" style="margin-bottom:1rem">
+    <section class="card">
       <div class="card-head">
         <h2>Backlog</h2>
-        <a href="{% url 'backlog' %}">See all</a>
+        <a class="text-sm" href="{% url 'backlog' %}">See all</a>
       </div>
       {% for item in backlog %}
         <div class="row">
-          <div>
+          <div class="flex-1">
             <strong>{{ item.title }}</strong>
-            <small>
-              <span class="pill {{ item.media_type }}">{{ item.get_media_type_display }}</span>
+            <p class="text-xs text-muted">
+              <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
               {{ item.remaining_minutes }} min left &middot; {{ item.priority_label }}
-            </small>
+            </p>
             {% if item.minutes_completed %}
-              <div class="progress"><span style="width: {{ item.percent_complete }}%"></span></div>
+              <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-2">
+                <div class="h-full bg-good" style="width: {{ item.percent_complete }}%"></div>
+              </div>
             {% endif %}
           </div>
         </div>
@@ -120,7 +119,7 @@
           <div class="row">
             <div>
               <strong>{{ suggestion.backlog_item.title }}</strong>
-              <small>{{ suggestion.date|date:"D, M j" }} at {{ suggestion.start_time|time:"g:i A" }}</small>
+              <p class="text-xs text-muted">{{ suggestion.date|date:"D, M j" }} at {{ suggestion.start_time|time:"g:i A" }}</p>
             </div>
           </div>
         {% endfor %}

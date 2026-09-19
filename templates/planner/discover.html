@@ -2,55 +2,54 @@
 {% block title %}Discover · MediaFlow{% endblock %}
 
 {% block content %}
-<header class="page-header">
+<header class="mb-5 flex flex-wrap items-end justify-between gap-4">
   <div>
     <p class="eyebrow">Discover</p>
-    <h1>Find something worth the time</h1>
-    <p class="lede">You have about {{ free_today }} free today. Filter by how long you actually have.</p>
+    <h1 class="text-3xl font-bold tracking-tight">Find something worth the time</h1>
+    <p class="text-muted">You have about {{ free_today }} free today. Filter by how long you actually have.</p>
   </div>
-  <a class="button secondary" href="{% url 'backlog_add' %}">Add manually</a>
+  <a class="btn btn-secondary" href="{% url 'backlog_add' %}">Add manually</a>
 </header>
 
-<form method="get" class="card" style="margin-bottom:1.25rem">
-  <div class="filters">
-    <p>{{ form.q.label_tag }}{{ form.q }}</p>
+<form method="get" class="card mb-5">
+  <div class="grid items-end gap-3 sm:grid-cols-3 lg:grid-cols-6 [&_p]:mb-0">
+    <p class="sm:col-span-3 lg:col-span-1">{{ form.q.label_tag }}{{ form.q }}</p>
     <p>{{ form.media_type.label_tag }}{{ form.media_type }}</p>
     <p>{{ form.genre.label_tag }}{{ form.genre }}</p>
     <p>{{ form.max_minutes.label_tag }}{{ form.max_minutes }}</p>
     <p>{{ form.sort.label_tag }}{{ form.sort }}</p>
-    <p><button style="width:100%">Search</button></p>
+    <p><button class="btn w-full justify-center">Search</button></p>
   </div>
 </form>
 
-<p class="meta" style="margin-bottom:.9rem">{{ result_count }} result{{ result_count|pluralize }}</p>
+<p class="mb-3 text-sm text-muted">{{ result_count }} result{{ result_count|pluralize }}</p>
 
-<div class="media-grid">
+<div class="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
   {% for item in results %}
-    <article class="media-card">
-      <div>
-        <span class="pill {{ item.media_type }}">{{ item.get_media_type_display }}</span>
+    <article class="card flex flex-col gap-2">
+      <div class="flex flex-wrap gap-1">
+        <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
         {% if item.genre %}<span class="pill">{{ item.genre }}</span>{% endif %}
       </div>
-      <h3><a href="{{ item.get_absolute_url }}">{{ item.title }}</a></h3>
-      <p class="meta">
-        {{ item.creator }}{% if item.release_year %}<span class="meta-dot"></span>{{ item.release_year }}{% endif %}
+      <h3 class="font-semibold"><a href="{{ item.get_absolute_url }}">{{ item.title }}</a></h3>
+      <p class="text-sm text-muted">
+        {{ item.creator }}{% if item.release_year %} &middot; {{ item.release_year }}{% endif %}<br>
+        {{ item.typical_minutes }} min{% if item.rating %} &middot; {{ item.rating }}/10{% endif %}
       </p>
-      <p class="meta">
-        {{ item.typical_minutes }} min{% if item.rating %}<span class="meta-dot"></span>{{ item.rating }}/10{% endif %}
-      </p>
-      <div class="spacer"></div>
-      {% if item.pk in owned_ids %}
-        <span class="pill accent">On your backlog</span>
-      {% else %}
-        <form method="post" action="{% url 'add_from_catalog' item.pk %}">
-          {% csrf_token %}
-          <input type="hidden" name="next" value="{{ request.get_full_path }}">
-          <button class="small secondary">Add to backlog</button>
-        </form>
-      {% endif %}
+      <div class="mt-auto pt-1">
+        {% if item.pk in owned_ids %}
+          <span class="pill pill-accent">On your backlog</span>
+        {% else %}
+          <form method="post" action="{% url 'add_from_catalog' item.pk %}">
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ request.get_full_path }}">
+            <button class="btn btn-sm btn-secondary">Add to backlog</button>
+          </form>
+        {% endif %}
+      </div>
     </article>
   {% empty %}
-    <p class="empty">Nothing matched those filters. Try widening the search.</p>
+    <p class="empty sm:col-span-2 lg:col-span-4">Nothing matched those filters. Try widening the search.</p>
   {% endfor %}
 </div>
 {% endblock %}

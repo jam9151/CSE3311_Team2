@@ -1,30 +1,29 @@
 {# Needs: suggestion, next_url (where to come back to after accept/reject). #}
-<article class="suggestion">
-  <span class="when">{{ suggestion.start_time|time:"g:i A" }} – {{ suggestion.end_time|time:"g:i A" }}</span>
-  <h3>{{ suggestion.backlog_item.title }}</h3>
-  <p class="meta">
-    <span class="pill {{ suggestion.backlog_item.media_type }}">{{ suggestion.backlog_item.get_media_type_display }}</span>
-    <span class="meta-dot"></span>{{ suggestion.minutes }} min
-    <span class="meta-dot"></span>Priority {{ suggestion.backlog_item.priority }}
+<article class="mb-3 rounded-lg border border-l-[3px] border-line border-l-accent bg-surface-2 px-4 py-3.5 last:mb-0">
+  <span class="text-sm font-semibold tabular-nums text-accent">{{ suggestion.start_time|time:"g:i A" }} – {{ suggestion.end_time|time:"g:i A" }}</span>
+  <h3 class="mt-0.5 font-semibold">{{ suggestion.backlog_item.title }}</h3>
+  <p class="text-sm text-muted">
+    <span class="pill pill-{{ suggestion.backlog_item.media_type }}">{{ suggestion.backlog_item.get_media_type_display }}</span>
+    &middot; {{ suggestion.minutes }} min &middot; Priority {{ suggestion.backlog_item.priority }}
   </p>
-  <p class="why">{{ suggestion.reason }}</p>
+  <p class="mt-1.5 mb-3 text-sm text-muted">{{ suggestion.reason }}</p>
 
-  <div class="actions">
+  <div class="flex flex-wrap items-center gap-2">
     {% if suggestion.status == "pending" %}
-      <form class="inline" method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'accept' %}">
+      <form method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'accept' %}">
         {% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">
-        <button class="small">Add to calendar</button>
+        <button class="btn btn-sm">Add to calendar</button>
       </form>
-      <form class="inline" method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'reject' %}">
+      <form method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'reject' %}">
         {% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">
-        <button class="small ghost">Not today</button>
+        <button class="btn btn-sm btn-ghost">Not today</button>
       </form>
     {% elif suggestion.status == "accepted" %}
-      <form class="inline" method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'done' %}">
+      <form method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'done' %}">
         {% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">
-        <button class="small secondary">Mark done</button>
+        <button class="btn btn-sm btn-secondary">Mark done</button>
       </form>
-      <span class="pill accent">Planned</span>
+      <span class="pill pill-accent">Planned</span>
     {% else %}
       <span class="pill">Completed</span>
     {% endif %}
