@@ -1,16 +1,16 @@
-# MediaFlow — Backlog Manager
+# MediaFlow
 
-CSE 3311 Team 2. A Django web app that keeps films, TV, books, and games in one
-backlog, reads the gaps in your week, and tells you what actually fits the time
-you have tonight.
+CSE 3311 Team 2.
 
-The competitors each cover one medium and none of them read your calendar.
-Letterboxd shows a runtime but never uses it to plan anything. Goodreads can
-tell you that you are behind but not when you have time to read. MediaFlow
-takes your schedule as input and answers the actual question: *what should I
-start tonight?*
+A Django app that keeps films, TV, books and games in one backlog, looks at the
+gaps in your week, and tells you what actually fits the time you have tonight.
 
-## Quick start
+The competitors all cover one medium and none of them read your calendar.
+Letterboxd shows a runtime but never uses it for anything. Goodreads can tell
+you you're behind but not when you have time to catch up. We take the schedule
+as input and answer the question people actually have: what do I start tonight?
+
+## Running it
 
 ```powershell
 python -m venv .venv
@@ -21,78 +21,70 @@ python manage.py seed_catalog --demo
 python manage.py runserver
 ```
 
-Open `http://127.0.0.1:8000/`.
+Then go to `http://127.0.0.1:8000/`.
 
-`seed_catalog` loads 36 catalog titles. The `--demo` flag also creates a demo
-student with a full class and work schedule, so the scheduler has something to
-reason about immediately:
+`seed_catalog` loads 36 titles into the catalog. The `--demo` flag also makes a
+test account with a full class/work schedule already filled in, which saves
+having to enter one every time you want to try the scheduler:
 
-- username `demo`, password `mediaflow123`
+- user `demo`, password `mediaflow123`
 
-Sign up for a real account with any `@mavs.uta.edu` address. The admin lives at
-`/admin/` (`python manage.py createsuperuser`).
+Signing up for real needs a `@mavs.uta.edu` address. Admin is at `/admin/`
+(make a superuser with `python manage.py createsuperuser`).
 
-## What the prototype covers
+Tests: `python manage.py test`
 
-Against the feature list in the inception deck:
+## Where we are on the feature list
 
-| Feature | State |
+| Feature | Status |
 | --- | --- |
-| User accounts | Done, restricted to `@mavs.uta.edu` at signup |
-| Media search | Done, with type / genre / length / sort filters |
-| Media details | Done, including whether it fits your free time today |
-| Visual calendar | Done, month grid with a per-day panel |
-| Weekly schedule | Done, recurring blocks plus one-off commitments |
-| Priority system | Done, 1–5, editable inline from the backlog |
-| Free time detection | Done, the core of `services.py` |
-| Accept / reject suggestions | Done, rejections feed back into scoring |
-| Media review manager | Done, rate and write up anything you finish |
-| Push notifications | Not built — genuinely a stretch item, needs service workers |
+| User accounts | done, `@mavs.uta.edu` only |
+| Media search | done, filter by type / genre / length |
+| Media details | done, shows whether it fits your free time today |
+| Visual calendar | done, month grid + day panel |
+| Weekly schedule | done, recurring blocks and one-off commitments |
+| Priority system | done, 1-5, editable from the backlog list |
+| Free time detection | done |
+| Accept/reject suggestions | done, rejections feed back into the scoring |
+| Review manager | done |
+| Push notifications | not started, still a stretch item |
 
 ## How the scheduling works
 
-Two steps, deliberately separate, both in `planner/services.py`:
+Two steps, both in `planner/services.py`.
 
-**1. Free time detection.** You tell the app when you are *busy*, not when you
-are free. `free_intervals()` walks your waking window, subtracts recurring
-weekly blocks, dated commitments, and anything you have already accepted, and
-returns the gaps that are left. Gaps under 20 minutes are dropped.
+`free_intervals()` figures out when you're free. You enter when you're *busy*
+(classes, shifts, one-off stuff) and it subtracts all of that from your waking
+hours, plus anything you've already accepted. What's left are the gaps. Gaps
+under 20 minutes get thrown away.
 
-**2. Suggestion scoring.** For each gap, `suggest_for_day()` scores every
-backlog item and proposes the best fit. The scoring weighs priority, whether
-you have already started something, how well the item uses the gap, and whether
-you can finish it in one sitting. Recent rejections push an item down for two
-weeks.
+`suggest_for_day()` then picks something for each gap. It scores every backlog
+item on priority, whether you've already started it, how much of the gap it
+uses, and whether you'd finish it in one go. Turning something down subtracts
+from its score for the next two weeks so it stops nagging you about it.
 
-The part that makes the output feel right is in `SESSION_RULES`
-(`planner/models.py`). A film is all-or-nothing: if its runtime does not fit the
-gap it is not a candidate at all. Books, TV, and games are taken in whole chunks
-— a chapter, an episode, a session — and capped at one realistic sitting, so a
-free Saturday does not get swallowed by a single twelve-hour reading block.
+The part that makes the output feel right is `SESSION_RULES` in `models.py`.
+Movies are all or nothing - if the runtime doesn't fit the gap we don't suggest
+it at all. Books, TV and games get split into whole chunks (a chapter, an
+episode) and capped at one sitting. That cap matters: without it the first item
+picked would take the entire free day, which is how it behaved at first.
 
-That is why a 2-hour morning gap gets a chapter while a long afternoon gets the
-priority-5 film.
+So a 2 hour gap in the morning gets you a chapter, and a long free afternoon
+gets the movie.
 
-## Layout
+## Files
 
 ```
 planner/
-  models.py     Catalog, backlog, schedule, suggestions, reviews
-  services.py   Free time detection and the suggestion engine
-  views.py      Page and action handlers
-  forms.py      Including the @mavs.uta.edu signup rule
-  tests.py      27 tests, heaviest on the scheduling logic
+  models.py     catalog, backlog, schedule, suggestions, reviews
+  services.py   free time detection + suggestion scoring
+  views.py
+  forms.py      includes the mavs.uta.edu signup check
+  tests.py      27 tests, mostly on the scheduling
   management/commands/seed_catalog.py
-templates/      Server-rendered, no build step
-static/css/     Plain CSS, no framework
+templates/
+static/css/
 ```
 
-No JavaScript framework and no build step, which keeps the dependency-
-deprecation risk from the inception deck close to zero: the only requirement is
-Django.
-
-## Tests
-
-```powershell
-python manage.py test
-```
+No JS framework and no build step. Only dependency is Django, which should keep
+the dependency-deprecation risk from the inception deck to about zero.

@@ -1,7 +1,4 @@
-{% comment %}
-One proposed sitting, with the accept / reject / done controls.
-Expects: suggestion, and `next_url` for where to return after responding.
-{% endcomment %}
+{# Needs: suggestion, next_url (where to come back to after accept/reject). #}
 <article class="suggestion">
   <span class="when">{{ suggestion.start_time|time:"g:i A" }} – {{ suggestion.end_time|time:"g:i A" }}</span>
   <h3>{{ suggestion.backlog_item.title }}</h3>

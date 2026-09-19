@@ -1,10 +1,3 @@
-"""Data model for MediaFlow, the Backlog Manager.
-
-The organising idea is that a user tells us when they are *busy* (recurring
-weekly blocks plus one-off commitments) and the app works out when they are
-free, then proposes something from their backlog that actually fits the gap.
-"""
-
 from django.conf import settings
 from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
@@ -19,13 +12,13 @@ class MediaType(models.TextChoices):
     GAME = "game", "Game"
 
 
-# How much of an item a person realistically consumes in one sitting, and
-# whether that item can be split at all. A film wants its whole runtime in one
-# uninterrupted block; a book is happy to be read one chapter at a time.
+# Per-type rules for how we carve an item into sittings.
 #
-# ``chunk_minutes`` is the natural unit (a chapter, an episode). ``max_minutes``
-# caps a single sitting, because a free Saturday does not mean anyone reads for
-# twelve hours straight -- without it, one item would swallow the whole day.
+# chunk_minutes is the natural unit (a chapter, an episode). max_minutes caps
+# one sitting. We need that cap because a free Saturday doesn't mean anyone
+# reads for twelve hours straight -- without it the first item picked just
+# swallowed the entire day. Movies are the odd one out: they only work if the
+# whole runtime fits, so they get no chunking at all.
 SESSION_RULES = {
     MediaType.MOVIE: {"chunkable": False, "chunk_minutes": 0, "max_minutes": 0, "unit": "the whole film"},
     MediaType.TV: {"chunkable": True, "chunk_minutes": 45, "max_minutes": 135, "unit": "an episode"},
@@ -33,13 +26,11 @@ SESSION_RULES = {
     MediaType.GAME: {"chunkable": True, "chunk_minutes": 60, "max_minutes": 120, "unit": "a session"},
 }
 
-# A gap shorter than this is not worth suggesting anything for.
+# Anything shorter than this isn't worth suggesting against.
 MIN_USABLE_MINUTES = 20
 
 
 class Profile(models.Model):
-    """Per-user settings. Waking hours bound the window we search for free time."""
-
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")
     day_start = models.TimeField(default="08:00", help_text="When your day usually starts")
     day_end = models.TimeField(default="23:00", help_text="When you usually go to bed")
@@ -49,7 +40,7 @@ class Profile(models.Model):
 
 
 class CatalogItem(models.Model):
-    """A shared, app-wide media catalog that users search and add from."""
+    """Shared catalog everyone searches. Users copy from it into their backlog."""
 
     title = models.CharField(max_length=200)
     slug = models.SlugField(max_length=220, unique=True, blank=True)
@@ -73,6 +64,8 @@ class CatalogItem(models.Model):
 
     def save(self, *args, **kwargs):
         if not self.slug:
+            # Two different media can share a title (Dune the film, Dune the
+            # book), so the type goes in the slug and we still count up on ties.
             base = slugify(f"{self.title}-{self.media_type}")[:210]
             slug, counter = base, 2
             while CatalogItem.objects.filter(slug=slug).exclude(pk=self.pk).exists():
@@ -93,8 +86,6 @@ class CatalogItem(models.Model):
 
 
 class BacklogItem(models.Model):
-    """One entry on a user's personal backlog."""
-
     class Status(models.TextChoices):
         BACKLOG = "backlog", "Backlog"
         IN_PROGRESS = "in_progress", "In progress"
@@ -104,6 +95,7 @@ class BacklogItem(models.Model):
     PRIORITY_LABELS = {5: "Must play next", 4: "High", 3: "Normal", 2: "Low", 1: "Someday"}
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="backlog_items")
+    # Null for anything the user typed in by hand instead of adding from search.
     catalog_item = models.ForeignKey(
         CatalogItem, on_delete=models.SET_NULL, null=True, blank=True, related_name="backlog_entries"
     )
@@ -122,6 +114,8 @@ class BacklogItem(models.Model):
     class Meta:
         ordering = ["-priority", "added_at"]
         constraints = [
+            # Stops the same catalog entry being added twice. Hand-typed items
+            # have catalog_item = NULL, and the condition keeps those exempt.
             models.UniqueConstraint(
                 fields=["user", "catalog_item"],
                 condition=models.Q(catalog_item__isnull=False),
@@ -148,12 +142,7 @@ class BacklogItem(models.Model):
         return SESSION_RULES.get(self.media_type, SESSION_RULES[MediaType.BOOK])
 
     def session_minutes_for(self, available_minutes):
-        """How long a sitting we would propose inside a gap, or None if nothing fits.
-
-        A film is all-or-nothing: if its remaining runtime does not fit the gap,
-        it is not a candidate. Everything else is taken in whole chunks, capped
-        at one realistic sitting.
-        """
+        """Length of sitting to propose in a gap this size, or None if it won't fit."""
         rules = self.rules
         remaining = self.remaining_minutes
         if remaining <= 0 or available_minutes < MIN_USABLE_MINUTES:
@@ -164,8 +153,10 @@ class BacklogItem(models.Model):
 
         usable = min(available_minutes, rules["max_minutes"])
         if remaining <= usable:
-            # Close enough to the end to finish it in this sitting.
+            # Close enough to the end that we may as well finish it.
             return remaining
+        # Otherwise round down to whole chapters/episodes. Stopping mid-chapter
+        # isn't a real suggestion.
         whole_chunks = usable // rules["chunk_minutes"]
         return whole_chunks * rules["chunk_minutes"] if whole_chunks else None
 
@@ -174,7 +165,7 @@ class BacklogItem(models.Model):
 
 
 class RecurringBlock(models.Model):
-    """A repeating weekly commitment: work, class, practice, standing plans."""
+    """Something that happens every week: a class, a shift, practice."""
 
     class Weekday(models.IntegerChoices):
         MONDAY = 0, "Monday"
@@ -206,7 +197,7 @@ class RecurringBlock(models.Model):
 
 
 class Commitment(models.Model):
-    """A one-off dated commitment that blocks scheduling."""
+    """One-off dated thing, as opposed to a RecurringBlock."""
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="commitments")
     title = models.CharField(max_length=200)
@@ -229,10 +220,11 @@ class SuggestionQuerySet(models.QuerySet):
 
 
 class Suggestion(models.Model):
-    """A proposed sitting: this item, in this gap, on this day.
+    """One proposal: this item, in this gap, on this day.
 
-    Accepted suggestions become the user's plan and show on the calendar.
-    Rejected ones feed back into scoring so we stop proposing the same thing.
+    Accepted ones become the plan and show up on the calendar. Rejected ones
+    stay around on purpose -- the scoring reads them back so we stop pushing
+    something the user already said no to.
     """
 
     class Status(models.TextChoices):
@@ -266,8 +258,6 @@ class Suggestion(models.Model):
 
 
 class Review(models.Model):
-    """A short write-up kept after finishing something."""
-
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reviews")
     backlog_item = models.OneToOneField(BacklogItem, on_delete=models.CASCADE, related_name="review")
     rating = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
@@ -279,6 +269,7 @@ class Review(models.Model):
 
     @property
     def star_range(self):
+        # Templates can't do range(), so hand them something to loop over.
         return range(self.rating)
 
     def __str__(self):

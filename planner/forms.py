@@ -4,7 +4,8 @@ from django.contrib.auth.forms import UserCreationForm
 
 from .models import BacklogItem, Commitment, Profile, RecurringBlock, Review
 
-# The team scoped this to UTA students, enforced at signup.
+# Scoped to UTA students, per the inception deck. Checked at signup only --
+# we don't verify the address actually exists, that's an iteration 2 problem.
 UTA_EMAIL_DOMAIN = "mavs.uta.edu"
 
 
@@ -40,6 +41,8 @@ class RegisterForm(UserCreationForm):
 
 
 class ProfileForm(forms.ModelForm):
+    """Waking hours. These bound the window free time is searched in."""
+
     class Meta:
         model = Profile
         fields = ["day_start", "day_end"]
@@ -107,6 +110,8 @@ class CommitmentForm(forms.ModelForm):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
+        # datetime-local posts back as 2026-09-19T14:30, which Django won't
+        # parse unless we say so.
         for field in ("starts_at", "ends_at"):
             self.fields[field].input_formats = ["%Y-%m-%dT%H:%M"]
 
@@ -130,7 +135,7 @@ class ReviewForm(forms.ModelForm):
 
 
 class CatalogSearchForm(forms.Form):
-    """Filters for the discover page. Every field is optional."""
+    """Discover page filters. Not a ModelForm -- nothing here gets saved."""
 
     SORT_CHOICES = [
         ("title", "Title A-Z"),
@@ -150,6 +155,8 @@ class CatalogSearchForm(forms.Form):
     sort = forms.ChoiceField(required=False, choices=SORT_CHOICES, label="Sort by")
 
     def __init__(self, *args, media_types=(), genres=(), **kwargs):
+        # Genres come from whatever is actually in the catalog, so the choices
+        # are built here instead of being hardcoded on the field.
         super().__init__(*args, **kwargs)
         self.fields["media_type"].choices = [("", "Any type")] + list(media_types)
         self.fields["genre"].choices = [("", "Any genre")] + [(g, g) for g in genres]

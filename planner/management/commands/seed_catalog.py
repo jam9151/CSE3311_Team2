@@ -1,11 +1,8 @@
-"""Populate the shared media catalog, and optionally a demo student account.
+"""Fills the catalog, and with --demo a test account to click around in.
 
-    python manage.py seed_catalog
-    python manage.py seed_catalog --demo
-
-The catalog stands in for the scraped media source described in the inception
-deck. Runtimes and page-time estimates are approximate on purpose: the point of
-the prototype is that the scheduler has a duration to reason about.
+Stands in for the scraped media source from the inception deck. The runtimes
+are rough, especially the reading times -- doesn't matter much for now, the
+scheduler just needs a number to work with.
 """
 
 from datetime import date, time
@@ -17,7 +14,7 @@ from django.db import transaction
 from planner.models import BacklogItem, CatalogItem, MediaType, Profile, RecurringBlock
 
 CATALOG = [
-    # title, type, genre, creator, release, minutes, rating, description
+    # title, type, genre, creator, release, minutes, rating, blurb
     ("Dune", MediaType.MOVIE, "Science fiction", "Denis Villeneuve", date(2021, 10, 22), 155, 8.0,
      "A noble family is drawn into a war over the most valuable resource in the galaxy."),
     ("Everything Everywhere All at Once", MediaType.MOVIE, "Science fiction", "Daniels", date(2022, 3, 25), 139, 7.8,
@@ -119,7 +116,7 @@ DEMO_BACKLOG = [
 
 
 class Command(BaseCommand):
-    help = "Seed the shared media catalog, and optionally a demo student account."
+    help = "Seed the media catalog, and optionally a demo student account."
 
     def add_arguments(self, parser):
         parser.add_argument(
@@ -188,7 +185,8 @@ class Command(BaseCommand):
                 },
             )
 
-        # Give one item some progress so "finish what you started" has something to prefer.
+        # Leave one thing part-finished, otherwise the in-progress bonus in the
+        # scoring never gets exercised when demoing.
         in_progress = user.backlog_items.filter(title="Project Hail Mary").first()
         if in_progress:
             in_progress.minutes_completed = 180

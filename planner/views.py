@@ -24,7 +24,7 @@ from .services import day_plan, free_intervals, humanize_minutes, month_grid, su
 
 
 def _parse_date(raw, fallback=None):
-    """Read a ?date=YYYY-MM-DD parameter, falling back when it is missing or junk."""
+    """?date=YYYY-MM-DD, falling back if it's missing or someone edited the URL."""
     fallback = fallback or timezone.localdate()
     if not raw:
         return fallback
@@ -45,6 +45,8 @@ def register(request):
     if request.method == "POST" and form.is_valid():
         user = form.save()
         login(request, user)
+        # Straight to the schedule, not the dashboard -- with no commitments
+        # entered there's no free time yet and the dashboard looks broken.
         messages.success(request, "Welcome to MediaFlow. Start by telling us when you are busy.")
         return redirect("weekly_schedule")
     return render(request, "registration/register.html", {"form": form})
@@ -66,7 +68,7 @@ def dashboard(request):
         "plan": plan,
         "free_minutes": free_minutes,
         "free_label": humanize_minutes(free_minutes),
-        "longest_gap": max((gap for gap in plan["free"]), key=lambda g: g.minutes, default=None),
+        "longest_gap": max(plan["free"], key=lambda g: g.minutes, default=None),
         "upcoming": upcoming,
         "backlog": backlog[:6],
         "backlog_count": backlog.count(),
@@ -80,11 +82,14 @@ def dashboard(request):
 @login_required
 @require_POST
 def refresh_suggestions(request):
-    """Generate fresh suggestions for a day, clearing any untouched ones first."""
     day = _parse_date(request.POST.get("date"))
+    # Clear the untouched ones first so the user doesn't end up with a pile of
+    # stale suggestions every time they press the button.
     request.user.suggestions.filter(date=day, status=Suggestion.Status.PENDING).delete()
     created = suggest_for_day(request.user, day)
 
+    # Empty results have three different causes and the fix differs each time,
+    # so work out which one it was instead of saying "nothing found".
     if created:
         messages.success(request, f"Found {len(created)} thing(s) that fit your free time.")
     elif not request.user.backlog_items.exclude(status=BacklogItem.Status.COMPLETED).exists():
@@ -108,12 +113,15 @@ def respond_to_suggestion(request, pk, action):
             suggestion.backlog_item.status = BacklogItem.Status.IN_PROGRESS
             suggestion.backlog_item.save(update_fields=["status"])
         messages.success(request, f"Added {suggestion.backlog_item.title} to your calendar.")
+
     elif action == "reject":
         suggestion.status = Suggestion.Status.REJECTED
         messages.info(request, "Noted. We will ease off on that one for a while.")
+
     elif action == "done":
         suggestion.status = Suggestion.Status.DONE
         item = suggestion.backlog_item
+        # Trust the planned length rather than asking how long it actually took.
         item.minutes_completed = min(item.estimated_minutes, item.minutes_completed + suggestion.minutes)
         if item.remaining_minutes == 0:
             item.status = BacklogItem.Status.COMPLETED
@@ -123,6 +131,7 @@ def respond_to_suggestion(request, pk, action):
             item.status = BacklogItem.Status.IN_PROGRESS
             messages.success(request, f"Logged {humanize_minutes(suggestion.minutes)} on {item.title}.")
         item.save()
+
     else:
         raise Http404
 
@@ -133,13 +142,8 @@ def respond_to_suggestion(request, pk, action):
 
 @login_required
 def discover(request):
-    """Search the shared catalog and add items straight to a backlog."""
-    genres = (
-        CatalogItem.objects.exclude(genre="").order_by("genre").values_list("genre", flat=True).distinct()
-    )
-    form = CatalogSearchForm(
-        request.GET or None, media_types=MediaType.choices, genres=list(genres)
-    )
+    genres = CatalogItem.objects.exclude(genre="").order_by("genre").values_list("genre", flat=True).distinct()
+    form = CatalogSearchForm(request.GET or None, media_types=MediaType.choices, genres=list(genres))
     results = CatalogItem.objects.all()
 
     if form.is_valid():
@@ -156,6 +160,7 @@ def discover(request):
             results = results.filter(typical_minutes__lte=form.cleaned_data["max_minutes"])
         results = results.order_by(form.cleaned_data.get("sort") or "title")
 
+    # So the cards can show "already on your backlog" instead of an Add button.
     owned = set(
         request.user.backlog_items.filter(catalog_item__isnull=False).values_list("catalog_item_id", flat=True)
     )
@@ -169,35 +174,33 @@ def discover(request):
     return render(request, "planner/discover.html", context)
 
 
+def _fits_today(user, catalog_item):
+    """True/False, or None when there's no free time to compare against."""
+    gaps = free_intervals(user, timezone.localdate())
+    if not gaps:
+        return None
+    return max(gap.minutes for gap in gaps) >= catalog_item.typical_minutes
+
+
 @login_required
 def catalog_detail(request, slug):
     item = get_object_or_404(CatalogItem, slug=slug)
-    entry = request.user.backlog_items.filter(catalog_item=item).first()
     return render(
         request,
         "planner/catalog_detail.html",
         {
             "item": item,
-            "entry": entry,
+            "entry": request.user.backlog_items.filter(catalog_item=item).first(),
             "fits_today": _fits_today(request.user, item),
         },
     )
-
-
-def _fits_today(user, catalog_item):
-    """Whether today has a gap long enough for this item, for the detail page."""
-    gaps = free_intervals(user, timezone.localdate())
-    if not gaps:
-        return None
-    longest = max(gap.minutes for gap in gaps)
-    return longest >= catalog_item.typical_minutes
 
 
 @login_required
 @require_POST
 def add_from_catalog(request, pk):
     item = get_object_or_404(CatalogItem, pk=pk)
-    entry, created = BacklogItem.objects.get_or_create(
+    _, created = BacklogItem.objects.get_or_create(
         user=request.user,
         catalog_item=item,
         defaults={
@@ -222,16 +225,13 @@ def backlog(request):
     return render(
         request,
         "planner/backlog.html",
-        {
-            "items": items,
-            "active_status": status or "",
-            "statuses": BacklogItem.Status.choices,
-        },
+        {"items": items, "active_status": status or "", "statuses": BacklogItem.Status.choices},
     )
 
 
 @login_required
 def backlog_edit(request, pk=None):
+    # Same view handles add and edit; pk is None on the add route.
     instance = get_object_or_404(BacklogItem, pk=pk, user=request.user) if pk else None
     form = BacklogItemForm(request.POST or None, instance=instance)
     if request.method == "POST" and form.is_valid():
@@ -253,6 +253,7 @@ def backlog_edit(request, pk=None):
 @login_required
 @require_POST
 def backlog_priority(request, pk):
+    """Inline priority dropdown on the backlog page."""
     item = get_object_or_404(BacklogItem, pk=pk, user=request.user)
     try:
         priority = int(request.POST.get("priority", item.priority))
@@ -275,10 +276,9 @@ def backlog_delete(request, pk):
 
 @login_required
 def weekly_schedule(request):
-    """The recurring commitments grid, plus the free time it implies."""
     profile, _ = Profile.objects.get_or_create(user=request.user)
 
-    # Two independent forms on one page, told apart by their submit button name.
+    # Two forms on the page, told apart by which submit button was used.
     saving_profile = "save_profile" in request.POST
     adding_block = "add_block" in request.POST
     profile_form = ProfileForm(request.POST if saving_profile else None, instance=profile)
@@ -295,7 +295,8 @@ def weekly_schedule(request):
         messages.success(request, f"Added {block.label} to your week.")
         return redirect("weekly_schedule")
 
-    # Show the coming week so free time reflects real dates and commitments.
+    # Real dates rather than a generic Mon-Sun, so the free time shown accounts
+    # for one-off commitments too.
     today = timezone.localdate()
     week = []
     for offset in range(7):
@@ -325,8 +326,7 @@ def weekly_schedule(request):
 @login_required
 @require_POST
 def delete_block(request, pk):
-    block = get_object_or_404(RecurringBlock, pk=pk, user=request.user)
-    block.delete()
+    get_object_or_404(RecurringBlock, pk=pk, user=request.user).delete()
     messages.success(request, "Removed from your week.")
     return redirect("weekly_schedule")
 
@@ -349,14 +349,13 @@ def add_commitment(request):
 
 @login_required
 def calendar(request):
-    """Month grid on the left, the selected day's plan on the right."""
     today = timezone.localdate()
     selected = _parse_date(request.GET.get("date"), today)
 
+    # The month shown and the day selected are separate: paging to next month
+    # shouldn't throw away which day the side panel is on.
     try:
-        year = int(request.GET.get("year", selected.year))
-        month = int(request.GET.get("month", selected.month))
-        anchor = date_cls(year, month, 1)
+        anchor = date_cls(int(request.GET.get("year", selected.year)), int(request.GET.get("month", selected.month)), 1)
     except ValueError:
         anchor = selected.replace(day=1)
 
@@ -381,15 +380,14 @@ def calendar(request):
 
 @login_required
 def reviews(request):
-    completed_without_review = request.user.backlog_items.filter(
-        status=BacklogItem.Status.COMPLETED, review__isnull=True
-    )
     return render(
         request,
         "planner/reviews.html",
         {
             "reviews": request.user.reviews.select_related("backlog_item"),
-            "awaiting": completed_without_review,
+            "awaiting": request.user.backlog_items.filter(
+                status=BacklogItem.Status.COMPLETED, review__isnull=True
+            ),
         },
     )
 
@@ -404,6 +402,8 @@ def write_review(request, pk):
         review.user = request.user
         review.backlog_item = item
         review.save()
+        # Reviewing something implies you finished it, even if the backlog
+        # status was never updated.
         if item.status != BacklogItem.Status.COMPLETED:
             item.status = BacklogItem.Status.COMPLETED
             item.completed_at = timezone.now()
