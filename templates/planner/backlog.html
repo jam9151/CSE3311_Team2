@@ -1,70 +1,70 @@
 {% extends "base.html" %}
-{% load planner_extras %}
 {% block title %}Backlog · MediaFlow{% endblock %}
 
 {% block content %}
-<div class="mb-8 flex flex-wrap items-end justify-between gap-4">
-  <h1 class="font-display text-5xl leading-none">Backlog</h1>
-  <div class="flex items-baseline gap-5 text-sm">
-    <a href="{% url 'discover' %}">Browse the catalog</a>
-    <a class="btn btn-sm" href="{% url 'backlog_add' %}">Add by hand</a>
+<header class="mb-5 flex flex-wrap items-end justify-between gap-4">
+  <div>
+    <p class="eyebrow">Backlog</p>
+    <h1 class="text-3xl font-bold tracking-tight">Everything you mean to get to</h1>
   </div>
+  <div class="flex gap-2">
+    <a class="btn btn-secondary" href="{% url 'discover' %}">Browse catalog</a>
+    <a class="btn" href="{% url 'backlog_add' %}">Add item</a>
+  </div>
+</header>
+
+<div class="mb-4 flex flex-wrap gap-2">
+  <a class="btn btn-sm {% if not active_status %}btn-secondary{% else %}btn-ghost{% endif %}" href="{% url 'backlog' %}">All</a>
+  {% for value, label in statuses %}
+    <a class="btn btn-sm {% if active_status == value %}btn-secondary{% else %}btn-ghost{% endif %}" href="?status={{ value }}">{{ label }}</a>
+  {% endfor %}
 </div>
 
-<div class="section-head">
-  <nav class="flex flex-wrap gap-x-5 gap-y-1">
-    <a class="nav-link {% if not active_status %}nav-link-active{% endif %}" href="{% url 'backlog' %}">All</a>
-    {% for value, label in statuses %}
-      <a class="nav-link {% if active_status == value %}nav-link-active{% endif %}" href="?status={{ value }}">{{ label }}</a>
-    {% endfor %}
-  </nav>
-  <span class="hidden text-xs text-muted sm:inline">Priority 5 is suggested first</span>
-</div>
-
-<ul>
+<section class="card">
   {% for item in items %}
-    <li class="flex flex-wrap items-center gap-x-5 gap-y-2 border-b border-line py-4">
-      <form method="post" action="{% url 'backlog_priority' item.pk %}">
-        {% csrf_token %}
-        <input type="hidden" name="next" value="{{ request.get_full_path }}">
-        <label class="sr-only" for="prio-{{ item.pk }}">Priority for {{ item.title }}</label>
-        <select id="prio-{{ item.pk }}" name="priority" onchange="this.form.submit()" class="w-14 px-2 py-1 tabular-nums">
-          {% for value in "54321" %}
-            <option value="{{ value }}" {% if item.priority|stringformat:"s" == value %}selected{% endif %}>{{ value }}</option>
-          {% endfor %}
-        </select>
-      </form>
-
+    <div class="row flex-wrap">
       <div class="min-w-0 flex-1">
-        <div class="flex flex-wrap items-baseline gap-x-3">
+        <strong>
           {% if item.catalog_item %}
-            <a class="text-lg font-medium no-underline hover:underline" href="{{ item.catalog_item.get_absolute_url }}">{{ item.title }}</a>
+            <a href="{{ item.catalog_item.get_absolute_url }}">{{ item.title }}</a>
           {% else %}
-            <span class="text-lg font-medium">{{ item.title }}</span>
+            {{ item.title }}
           {% endif %}
-          <span class="tag tag-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
-        </div>
-        <div class="text-sm text-muted">
-          {{ item.get_status_display }} &middot; {{ item.remaining_minutes|duration }} of {{ item.estimated_minutes|duration }} left
-        </div>
+        </strong>
+        <p class="text-xs text-muted">
+          <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
+          {{ item.get_status_display }} &middot; {{ item.remaining_minutes }} of {{ item.estimated_minutes }} min left
+        </p>
         {% if item.minutes_completed %}
-          <div class="mt-2 h-0.5 max-w-60 bg-line"><div class="h-full bg-ink" style="width: {{ item.percent_complete }}%"></div></div>
+          <div class="mt-1.5 h-1 max-w-72 overflow-hidden rounded-full bg-surface-2">
+            <div class="h-full bg-good" style="width: {{ item.percent_complete }}%"></div>
+          </div>
         {% endif %}
       </div>
 
-      <div class="flex items-baseline gap-4 text-sm">
-        <a class="text-muted" href="{% url 'backlog_edit' item.pk %}">Edit</a>
+      <div class="flex items-center gap-2">
+        <form method="post" action="{% url 'backlog_priority' item.pk %}">
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{{ request.get_full_path }}">
+          <label class="sr-only" for="prio-{{ item.pk }}">Priority</label>
+          <select id="prio-{{ item.pk }}" name="priority" onchange="this.form.submit()" class="w-auto py-1">
+            {% for value in "54321" %}
+              <option value="{{ value }}" {% if item.priority|stringformat:"s" == value %}selected{% endif %}>P{{ value }}</option>
+            {% endfor %}
+          </select>
+        </form>
+        <a class="btn btn-sm btn-ghost" href="{% url 'backlog_edit' item.pk %}">Edit</a>
         {% if item.status == "completed" %}
-          <a class="text-muted" href="{% url 'write_review' item.pk %}">Review</a>
+          <a class="btn btn-sm btn-ghost" href="{% url 'write_review' item.pk %}">Review</a>
         {% endif %}
         <form method="post" action="{% url 'backlog_delete' item.pk %}">
           {% csrf_token %}
-          <button class="btn-link-danger">Remove</button>
+          <button class="btn btn-sm btn-danger">Remove</button>
         </form>
       </div>
-    </li>
+    </div>
   {% empty %}
-    <li class="empty">Nothing here. <a href="{% url 'discover' %}">Browse the catalog</a> to fill it up.</li>
+    <p class="empty">Nothing here. <a href="{% url 'discover' %}">Browse the catalog</a> to fill it up.</p>
   {% endfor %}
-</ul>
+</section>
 {% endblock %}

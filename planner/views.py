@@ -20,15 +20,7 @@ from .forms import (
     ReviewForm,
 )
 from .models import BacklogItem, CatalogItem, MediaType, Profile, RecurringBlock, Review, Suggestion
-from .services import (
-    day_plan,
-    day_strip,
-    free_intervals,
-    humanize_minutes,
-    month_grid,
-    suggest_for_day,
-    total_free_minutes,
-)
+from .services import day_plan, free_intervals, humanize_minutes, month_grid, suggest_for_day, total_free_minutes
 
 
 def _parse_date(raw, fallback=None):
@@ -74,7 +66,6 @@ def dashboard(request):
 
     context = {
         "plan": plan,
-        "strip": day_strip(request.user, today, include_pending=True),
         "free_minutes": free_minutes,
         "free_label": humanize_minutes(free_minutes),
         "longest_gap": max(plan["free"], key=lambda g: g.minutes, default=None),
@@ -317,7 +308,6 @@ def weekly_schedule(request):
                 "blocks": request.user.recurring_blocks.filter(weekday=day.weekday()),
                 "free": gaps,
                 "free_label": humanize_minutes(sum(gap.minutes for gap in gaps)),
-                "strip": day_strip(request.user, day, include_planned=False),
             }
         )
 
@@ -382,7 +372,6 @@ def calendar(request):
             "next_month": next_month,
             "selected": selected,
             "plan": day_plan(request.user, selected),
-            "strip": day_strip(request.user, selected, include_pending=True),
             "free_label": humanize_minutes(total_free_minutes(request.user, selected)),
             "weekday_names": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
         },

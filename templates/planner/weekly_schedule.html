@@ -2,77 +2,87 @@
 {% block title %}My week · MediaFlow{% endblock %}
 
 {% block content %}
-<h1 class="font-display text-5xl leading-none">Your week</h1>
-<p class="mt-2 mb-10 max-w-xl text-muted">
-  Tell us when you're busy. Everything left open between your classes and shifts is time we can suggest against.
-</p>
+<header class="mb-5">
+  <p class="eyebrow">Weekly schedule</p>
+  <h1 class="text-3xl font-bold tracking-tight">Tell us when you're busy</h1>
+  <p class="max-w-prose text-muted">
+    Add your classes, shifts, and standing plans. Whatever's left between them, inside your waking hours,
+    is free time we can suggest against.
+  </p>
+</header>
 
-<div class="grid gap-x-14 gap-y-12 lg:grid-cols-[1fr_20rem]">
-  <div>
-    <div class="section-head">
-      <h2>Next seven days</h2>
-      <a class="text-sm text-muted" href="{% url 'add_commitment' %}">+ One-off plan</a>
+<div class="grid items-start gap-5 lg:grid-cols-[3fr_2fr]">
+  <section class="card">
+    <div class="card-head">
+      <h2>The next seven days</h2>
+      <a class="text-sm" href="{% url 'add_commitment' %}">+ One-off commitment</a>
     </div>
-    <ul class="mb-12">
-      {% for day in week %}
-        <li class="grid grid-cols-[3.5rem_1fr_4.5rem] items-center gap-4 border-b border-line py-3">
-          <span class="text-sm"><span class="font-medium">{{ day.date|date:"D" }}</span> <span class="text-faint">{{ day.date|date:"j" }}</span></span>
-          {% include "planner/_day_strip.html" with strip=day.strip compact=True %}
-          <span class="text-right text-sm tabular-nums text-muted">{{ day.free_label }}</span>
-        </li>
-      {% endfor %}
-    </ul>
 
-    <div class="section-head"><h2>Every week</h2></div>
+    <div class="grid grid-cols-2 gap-2.5 sm:grid-cols-3 xl:grid-cols-4">
+      {% for day in week %}
+        <div class="rounded-lg border border-line bg-surface-2 p-3">
+          <h3 class="mb-2 text-sm font-semibold">{{ day.date|date:"D j" }}</h3>
+          {% for block in day.blocks %}
+            <div class="py-0.5 text-xs text-muted">{{ block.start_time|time:"g:iA" }} {{ block.label }}</div>
+          {% empty %}
+            <div class="py-0.5 text-xs text-muted">Nothing recurring</div>
+          {% endfor %}
+          <div class="mt-2 text-xs font-semibold text-good">{{ day.free_label }} free</div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="card-head mt-6"><h2>Recurring blocks</h2></div>
     {% regroup user.recurring_blocks.all by get_weekday_display as by_day %}
     {% for group in by_day %}
-      <div class="grid grid-cols-[6.5rem_1fr] gap-4 border-b border-line py-3 text-sm">
-        <span class="font-medium">{{ group.grouper }}</span>
-        <div>
+      <div class="row">
+        <div class="flex-1">
+          <strong>{{ group.grouper }}</strong>
           {% for block in group.list %}
-            <div class="flex flex-wrap items-baseline gap-x-3">
-              <span class="w-36 tabular-nums text-muted">{{ block.start_time|time:"g:i A" }}–{{ block.end_time|time:"g:i A" }}</span>
-              <span>{{ block.label }}</span>
+            <div class="text-sm text-muted">
+              {{ block.label }} &middot; {{ block.start_time|time:"g:i A" }}–{{ block.end_time|time:"g:i A" }}
               <form class="inline" method="post" action="{% url 'delete_block' block.pk %}">
-                {% csrf_token %}<button class="btn-link-danger text-xs">remove</button>
+                {% csrf_token %}<button class="btn-link text-xs">remove</button>
               </form>
             </div>
           {% endfor %}
         </div>
       </div>
     {% empty %}
-      <p class="empty">Nothing recurring yet. Add your first class or shift on the right.</p>
+      <p class="empty">No recurring blocks yet. Add your first one on the right.</p>
     {% endfor %}
 
     {% if commitments %}
-      <div class="section-head mt-12"><h2>One-off plans</h2></div>
+      <div class="card-head mt-6"><h2>One-off commitments</h2></div>
       {% for commitment in commitments %}
-        <div class="grid grid-cols-[6.5rem_1fr] gap-4 border-b border-line py-3 text-sm">
-          <span class="font-medium">{{ commitment.starts_at|date:"D, M j" }}</span>
-          <span><span class="tabular-nums text-muted">{{ commitment.starts_at|date:"g:i A" }}–{{ commitment.ends_at|date:"g:i A" }}</span>&ensp;{{ commitment.title }}</span>
+        <div class="row">
+          <div>
+            <strong>{{ commitment.title }}</strong>
+            <p class="text-xs text-muted">{{ commitment.starts_at|date:"D, M j · g:i A" }} – {{ commitment.ends_at|date:"g:i A" }}</p>
+          </div>
         </div>
       {% endfor %}
     {% endif %}
-  </div>
+  </section>
 
-  <aside>
-    <section class="mb-12">
-      <div class="section-head"><h2>Add something recurring</h2></div>
-      <form class="pt-4" method="post">
+  <div class="space-y-4">
+    <section class="card">
+      <div class="card-head"><h2>Waking hours</h2></div>
+      <form method="post">
+        {% csrf_token %}
+        {{ profile_form.as_p }}
+        <button name="save_profile" value="1" class="btn btn-secondary">Save hours</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Add a recurring block</h2></div>
+      <form method="post">
         {% csrf_token %}
         {{ block_form.as_p }}
         <button name="add_block" value="1" class="btn">Add to my week</button>
       </form>
     </section>
-
-    <section>
-      <div class="section-head"><h2>Waking hours</h2></div>
-      <form class="pt-4" method="post">
-        {% csrf_token %}
-        {{ profile_form.as_p }}
-        <button name="save_profile" value="1" class="btn btn-secondary">Save</button>
-      </form>
-    </section>
-  </aside>
+  </div>
 </div>
 {% endblock %}

@@ -2,15 +2,19 @@
 {% block title %}Review {{ item.title }} · MediaFlow{% endblock %}
 
 {% block content %}
-<section class="mx-auto max-w-md">
-  <span class="tag tag-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
-  <h1 class="mt-1 mb-6 font-display text-4xl leading-tight">How was {{ item.title }}?</h1>
+<section class="card mx-auto my-8 max-w-md">
+  <p class="eyebrow">Review</p>
+  <h1 class="text-2xl font-bold tracking-tight">{{ item.title }}</h1>
+  <p class="mb-5 text-sm text-muted">
+    <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
+    {{ item.estimated_minutes }} min
+  </p>
   <form method="post">
     {% csrf_token %}
     {{ form.as_p }}
-    <div class="flex items-baseline gap-5 pt-2">
+    <div class="flex gap-2">
       <button class="btn">Save review</button>
-      <a class="text-sm text-muted" href="{% url 'reviews' %}">Cancel</a>
+      <a class="btn btn-ghost" href="{% url 'reviews' %}">Cancel</a>
     </div>
   </form>
 </section>

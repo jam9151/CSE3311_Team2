@@ -1,55 +1,55 @@
 {% extends "base.html" %}
-{% load planner_extras %}
 {% block title %}Discover · MediaFlow{% endblock %}
 
 {% block content %}
-<div class="mb-8 flex flex-wrap items-end justify-between gap-4">
+<header class="mb-5 flex flex-wrap items-end justify-between gap-4">
   <div>
-    <h1 class="font-display text-5xl leading-none">Discover</h1>
-    <p class="mt-2 text-muted">You've got about {{ free_today }} free today. Filter by what fits.</p>
+    <p class="eyebrow">Discover</p>
+    <h1 class="text-3xl font-bold tracking-tight">Find something worth the time</h1>
+    <p class="text-muted">You have about {{ free_today }} free today. Filter by how long you actually have.</p>
   </div>
-  <a class="text-sm" href="{% url 'backlog_add' %}">Not listed? Add it by hand</a>
-</div>
+  <a class="btn btn-secondary" href="{% url 'backlog_add' %}">Add manually</a>
+</header>
 
-<form method="get" class="mb-10 grid items-end gap-3 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr_1fr_auto] [&_p]:mb-0">
-  <p>{{ form.q.label_tag }}{{ form.q }}</p>
-  <p>{{ form.media_type.label_tag }}{{ form.media_type }}</p>
-  <p>{{ form.genre.label_tag }}{{ form.genre }}</p>
-  <p>{{ form.max_minutes.label_tag }}{{ form.max_minutes }}</p>
-  <p>{{ form.sort.label_tag }}{{ form.sort }}</p>
-  <p><button class="btn w-full justify-center">Search</button></p>
+<form method="get" class="card mb-5">
+  <div class="grid items-end gap-3 sm:grid-cols-3 lg:grid-cols-6 [&_p]:mb-0">
+    <p class="sm:col-span-3 lg:col-span-1">{{ form.q.label_tag }}{{ form.q }}</p>
+    <p>{{ form.media_type.label_tag }}{{ form.media_type }}</p>
+    <p>{{ form.genre.label_tag }}{{ form.genre }}</p>
+    <p>{{ form.max_minutes.label_tag }}{{ form.max_minutes }}</p>
+    <p>{{ form.sort.label_tag }}{{ form.sort }}</p>
+    <p><button class="btn w-full justify-center">Search</button></p>
+  </div>
 </form>
 
-<div class="section-head">
-  <h2>{{ result_count }} title{{ result_count|pluralize }}</h2>
-</div>
-<ul>
+<p class="mb-3 text-sm text-muted">{{ result_count }} result{{ result_count|pluralize }}</p>
+
+<div class="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
   {% for item in results %}
-    <li class="grid grid-cols-[1fr_auto] items-center gap-x-6 gap-y-1 border-b border-line py-4 sm:grid-cols-[1fr_5.5rem_4rem_8rem]">
-      <div class="min-w-0">
-        <a class="font-display text-2xl leading-tight no-underline hover:underline" href="{{ item.get_absolute_url }}">{{ item.title }}</a>
-        <div class="mt-0.5 flex flex-wrap items-center gap-x-3 text-sm text-muted">
-          <span class="tag tag-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
-          <span>{{ item.creator }}{% if item.release_year %}, {{ item.release_year }}{% endif %}</span>
-          {% if item.genre %}<span class="text-faint">{{ item.genre }}</span>{% endif %}
-        </div>
+    <article class="card flex flex-col gap-2">
+      <div class="flex flex-wrap gap-1">
+        <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
+        {% if item.genre %}<span class="pill">{{ item.genre }}</span>{% endif %}
       </div>
-      <span class="hidden text-sm tabular-nums text-muted sm:block">{{ item.typical_minutes|duration }}</span>
-      <span class="hidden text-sm tabular-nums text-muted sm:block">{% if item.rating %}{{ item.rating }}<span class="text-faint">/10</span>{% endif %}</span>
-      <div class="text-right">
+      <h3 class="font-semibold"><a href="{{ item.get_absolute_url }}">{{ item.title }}</a></h3>
+      <p class="text-sm text-muted">
+        {{ item.creator }}{% if item.release_year %} &middot; {{ item.release_year }}{% endif %}<br>
+        {{ item.typical_minutes }} min{% if item.rating %} &middot; {{ item.rating }}/10{% endif %}
+      </p>
+      <div class="mt-auto pt-1">
         {% if item.pk in owned_ids %}
-          <span class="text-xs text-muted">On your backlog</span>
+          <span class="pill pill-accent">On your backlog</span>
         {% else %}
           <form method="post" action="{% url 'add_from_catalog' item.pk %}">
             {% csrf_token %}
             <input type="hidden" name="next" value="{{ request.get_full_path }}">
-            <button class="btn btn-sm btn-secondary">Add</button>
+            <button class="btn btn-sm btn-secondary">Add to backlog</button>
           </form>
         {% endif %}
       </div>
-    </li>
+    </article>
   {% empty %}
-    <li class="empty">Nothing matched. Try loosening the filters.</li>
+    <p class="empty sm:col-span-2 lg:col-span-4">Nothing matched those filters. Try widening the search.</p>
   {% endfor %}
-</ul>
+</div>
 {% endblock %}
