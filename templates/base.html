@@ -2,11 +2,53 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>{% block title %}MediaFlow{% endblock %}</title><link rel="stylesheet" href="{% static 'css/app.css' %}">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}MediaFlow{% endblock %}</title>
+  <link rel="stylesheet" href="{% static 'css/app.css' %}">
 </head>
 <body>
-  <nav><a class="brand" href="{% url 'home' %}">MediaFlow</a><span class="spacer"></span>{% if user.is_authenticated %}<span>{{ user.username }}</span><form action="{% url 'logout' %}" method="post">{% csrf_token %}<button class="link">Sign out</button></form>{% else %}<a href="{% url 'login' %}">Sign in</a>{% endif %}</nav>
-  <main>{% for message in messages %}<div class="message">{{ message }}</div>{% endfor %}{% block content %}{% endblock %}</main>
+  <nav class="topbar">
+    <a class="brand" href="{% url 'home' %}">
+      <span class="brand-mark">MF</span>
+      <span>MediaFlow</span>
+    </a>
+
+    {% if user.is_authenticated %}
+      <div class="nav-links">
+        <a href="{% url 'dashboard' %}" {% if request.resolver_match.url_name == 'dashboard' %}class="active"{% endif %}>Today</a>
+        <a href="{% url 'calendar' %}" {% if request.resolver_match.url_name == 'calendar' %}class="active"{% endif %}>Calendar</a>
+        <a href="{% url 'backlog' %}" {% if request.resolver_match.url_name == 'backlog' %}class="active"{% endif %}>Backlog</a>
+        <a href="{% url 'discover' %}" {% if request.resolver_match.url_name == 'discover' %}class="active"{% endif %}>Discover</a>
+        <a href="{% url 'weekly_schedule' %}" {% if request.resolver_match.url_name == 'weekly_schedule' %}class="active"{% endif %}>My week</a>
+        <a href="{% url 'reviews' %}" {% if request.resolver_match.url_name == 'reviews' %}class="active"{% endif %}>Reviews</a>
+      </div>
+      <form class="signout" action="{% url 'logout' %}" method="post">
+        {% csrf_token %}
+        <span class="who">{{ user.username }}</span>
+        <button class="link">Sign out</button>
+      </form>
+    {% else %}
+      <div class="nav-links">
+        <a href="{% url 'login' %}">Sign in</a>
+        <a class="button small" href="{% url 'register' %}">Create account</a>
+      </div>
+    {% endif %}
+  </nav>
+
+  <main class="page">
+    {% if messages %}
+      <div class="messages">
+        {% for message in messages %}
+          <div class="message {{ message.tags }}">{{ message }}</div>
+        {% endfor %}
+      </div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+
+  <footer class="footer">
+    <span>MediaFlow &middot; CSE 3311 Team 2 prototype</span>
+  </footer>
 </body>
 </html>

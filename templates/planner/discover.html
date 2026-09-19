@@ -1,0 +1,56 @@
+{% extends "base.html" %}
+{% block title %}Discover · MediaFlow{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Discover</p>
+    <h1>Find something worth the time</h1>
+    <p class="lede">You have about {{ free_today }} free today. Filter by how long you actually have.</p>
+  </div>
+  <a class="button secondary" href="{% url 'backlog_add' %}">Add manually</a>
+</header>
+
+<form method="get" class="card" style="margin-bottom:1.25rem">
+  <div class="filters">
+    <p>{{ form.q.label_tag }}{{ form.q }}</p>
+    <p>{{ form.media_type.label_tag }}{{ form.media_type }}</p>
+    <p>{{ form.genre.label_tag }}{{ form.genre }}</p>
+    <p>{{ form.max_minutes.label_tag }}{{ form.max_minutes }}</p>
+    <p>{{ form.sort.label_tag }}{{ form.sort }}</p>
+    <p><button style="width:100%">Search</button></p>
+  </div>
+</form>
+
+<p class="meta" style="margin-bottom:.9rem">{{ result_count }} result{{ result_count|pluralize }}</p>
+
+<div class="media-grid">
+  {% for item in results %}
+    <article class="media-card">
+      <div>
+        <span class="pill {{ item.media_type }}">{{ item.get_media_type_display }}</span>
+        {% if item.genre %}<span class="pill">{{ item.genre }}</span>{% endif %}
+      </div>
+      <h3><a href="{{ item.get_absolute_url }}">{{ item.title }}</a></h3>
+      <p class="meta">
+        {{ item.creator }}{% if item.release_year %}<span class="meta-dot"></span>{{ item.release_year }}{% endif %}
+      </p>
+      <p class="meta">
+        {{ item.typical_minutes }} min{% if item.rating %}<span class="meta-dot"></span>{{ item.rating }}/10{% endif %}
+      </p>
+      <div class="spacer"></div>
+      {% if item.pk in owned_ids %}
+        <span class="pill accent">On your backlog</span>
+      {% else %}
+        <form method="post" action="{% url 'add_from_catalog' item.pk %}">
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{{ request.get_full_path }}">
+          <button class="small secondary">Add to backlog</button>
+        </form>
+      {% endif %}
+    </article>
+  {% empty %}
+    <p class="empty">Nothing matched those filters. Try widening the search.</p>
+  {% endfor %}
+</div>
+{% endblock %}

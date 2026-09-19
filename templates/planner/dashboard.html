@@ -1,10 +1,131 @@
 {% extends "base.html" %}
-{% block title %}Dashboard · MediaFlow{% endblock %}
+{% block title %}Today · MediaFlow{% endblock %}
+
 {% block content %}
-<header class="page-header"><div><p class="eyebrow">THIS WEEK</p><h1>Your media plan</h1></div><form action="{% url 'build_schedule' %}" method="post">{% csrf_token %}<button>Build my schedule</button></form></header>
-<div class="grid">
-  <section class="card wide"><div class="card-head"><h2>Scheduled sessions</h2></div>{% for session in sessions %}<article class="session"><div><strong>{{ session.media_item.title }}</strong><small>{{ session.media_item.get_media_type_display }}</small></div><time>{{ session.starts_at|date:"D, M j · g:i A" }}–{{ session.ends_at|date:"g:i A" }}</time></article>{% empty %}<p class="empty">No sessions yet. Add availability and backlog items, then build your schedule.</p>{% endfor %}</section>
-  <section class="card"><div class="card-head"><h2>Backlog</h2><a href="{% url 'add_media' %}">+ Add</a></div>{% for item in items %}<article><strong>{{ item.title }}</strong><small>{{ item.get_media_type_display }} · {{ item.remaining_minutes }} min left · Priority {{ item.priority }}</small></article>{% empty %}<p class="empty">Your backlog is empty.</p>{% endfor %}</section>
-  <section class="card"><div class="card-head"><h2>Weekly availability</h2><a href="{% url 'add_availability' %}">+ Add</a></div>{% for window in availability %}<article><strong>{{ window.get_weekday_display }}</strong><small>{{ window.start_time|time:"g:i A" }}–{{ window.end_time|time:"g:i A" }}</small></article>{% empty %}<p class="empty">Add time windows when you are free.</p>{% endfor %}</section>
-  <section class="card"><div class="card-head"><h2>Commitments</h2><a href="{% url 'add_commitment' %}">+ Add</a></div>{% for commitment in commitments %}<article><strong>{{ commitment.title }}</strong><small>{{ commitment.starts_at|date:"D, M j · g:i A" }}</small></article>{% empty %}<p class="empty">No upcoming commitments.</p>{% endfor %}</section>
-</div>{% endblock %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">{% now "l, F j" %}</p>
+    <h1>What should I start tonight?</h1>
+  </div>
+  <form method="post" action="{% url 'refresh_suggestions' %}">
+    {% csrf_token %}
+    <input type="hidden" name="next" value="{% url 'dashboard' %}">
+    <button>Suggest something</button>
+  </form>
+</header>
+
+{% if needs_schedule %}
+  <div class="message">
+    We cannot find your free time yet. <a href="{% url 'weekly_schedule' %}">Tell us when you are busy</a> and the rest follows.
+  </div>
+{% endif %}
+
+<div class="stat-row">
+  <div class="stat">
+    <div class="value">{{ free_label }}</div>
+    <div class="label">Free today</div>
+  </div>
+  <div class="stat">
+    <div class="value">{% if longest_gap %}{{ longest_gap.label }}{% else %}&mdash;{% endif %}</div>
+    <div class="label">Longest gap</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ backlog_count }}</div>
+    <div class="label">In your backlog</div>
+  </div>
+  <div class="stat">
+    <div class="value">{{ plan.planned|length }}</div>
+    <div class="label">Planned today</div>
+  </div>
+</div>
+
+<div class="split">
+  <div>
+    <section class="card" style="margin-bottom:1rem">
+      <div class="card-head">
+        <h2>Suggestions for today</h2>
+        <a href="{% url 'calendar' %}">Open calendar</a>
+      </div>
+
+      {% for suggestion in plan.pending %}
+        {% include "planner/_suggestion.html" with suggestion=suggestion next_url="/dashboard/" %}
+      {% empty %}
+        <p class="empty">
+          No open suggestions. Press <strong>Suggest something</strong> and we will look at the gaps in your day.
+        </p>
+      {% endfor %}
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Planned today</h2></div>
+      {% for suggestion in plan.planned %}
+        {% include "planner/_suggestion.html" with suggestion=suggestion next_url="/dashboard/" %}
+      {% empty %}
+        <p class="empty">Nothing on the calendar for today yet.</p>
+      {% endfor %}
+    </section>
+  </div>
+
+  <div>
+    <section class="card" style="margin-bottom:1rem">
+      <div class="card-head">
+        <h2>Your day</h2>
+        <a href="{% url 'weekly_schedule' %}">Edit</a>
+      </div>
+      <ul class="timeline">
+        {% for block in plan.busy %}
+          <li>
+            <span class="time">{{ block.start|time:"g:i A" }}–{{ block.end|time:"g:i A" }}</span>
+            <span class="busy-label">{{ block.label }}</span>
+          </li>
+        {% endfor %}
+        {% for gap in plan.free %}
+          <li>
+            <span class="time">{{ gap.start|time:"g:i A" }}–{{ gap.end|time:"g:i A" }}</span>
+            <span class="free">Free &middot; {{ gap.minutes }} min</span>
+          </li>
+        {% empty %}
+          <li><span class="busy-label">No free time left today.</span></li>
+        {% endfor %}
+      </ul>
+    </section>
+
+    <section class="card" style="margin-bottom:1rem">
+      <div class="card-head">
+        <h2>Backlog</h2>
+        <a href="{% url 'backlog' %}">See all</a>
+      </div>
+      {% for item in backlog %}
+        <div class="row">
+          <div>
+            <strong>{{ item.title }}</strong>
+            <small>
+              <span class="pill {{ item.media_type }}">{{ item.get_media_type_display }}</span>
+              {{ item.remaining_minutes }} min left &middot; {{ item.priority_label }}
+            </small>
+            {% if item.minutes_completed %}
+              <div class="progress"><span style="width: {{ item.percent_complete }}%"></span></div>
+            {% endif %}
+          </div>
+        </div>
+      {% empty %}
+        <p class="empty">Nothing here yet. <a href="{% url 'discover' %}">Find something to add</a>.</p>
+      {% endfor %}
+    </section>
+
+    {% if upcoming %}
+      <section class="card">
+        <div class="card-head"><h2>Coming up</h2></div>
+        {% for suggestion in upcoming %}
+          <div class="row">
+            <div>
+              <strong>{{ suggestion.backlog_item.title }}</strong>
+              <small>{{ suggestion.date|date:"D, M j" }} at {{ suggestion.start_time|time:"g:i A" }}</small>
+            </div>
+          </div>
+        {% endfor %}
+      </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

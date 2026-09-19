@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}My week · MediaFlow{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Weekly schedule</p>
+    <h1>Tell us when you are busy</h1>
+    <p class="lede">
+      Add your classes, shifts, and standing plans. Everything left between them, inside your waking hours,
+      is free time we can suggest against.
+    </p>
+  </div>
+</header>
+
+<div class="split">
+  <section class="card">
+    <div class="card-head">
+      <h2>The next seven days</h2>
+      <a href="{% url 'add_commitment' %}">+ One-off commitment</a>
+    </div>
+
+    <div class="week-grid">
+      {% for day in week %}
+        <div class="day-col">
+          <h3>{{ day.date|date:"D j" }}</h3>
+          {% for block in day.blocks %}
+            <div class="blk">{{ block.start_time|time:"g:iA" }} {{ block.label }}</div>
+          {% empty %}
+            <div class="blk">Nothing recurring</div>
+          {% endfor %}
+          <div class="free-total">{{ day.free_label }} free</div>
+        </div>
+      {% endfor %}
+    </div>
+
+    <div class="card-head" style="margin-top:1.5rem">
+      <h2>Recurring blocks</h2>
+    </div>
+    {% regroup user.recurring_blocks.all by get_weekday_display as by_day %}
+    {% for group in by_day %}
+      <div class="row">
+        <div style="flex:1">
+          <strong>{{ group.grouper }}</strong>
+          {% for block in group.list %}
+            <small>
+              {{ block.label }} &middot; {{ block.start_time|time:"g:i A" }}–{{ block.end_time|time:"g:i A" }}
+              <form class="inline" method="post" action="{% url 'delete_block' block.pk %}">
+                {% csrf_token %}<button class="link">remove</button>
+              </form>
+            </small>
+          {% endfor %}
+        </div>
+      </div>
+    {% empty %}
+      <p class="empty">No recurring blocks yet. Add your first one on the right.</p>
+    {% endfor %}
+
+    {% if commitments %}
+      <div class="card-head" style="margin-top:1.5rem"><h2>One-off commitments</h2></div>
+      {% for commitment in commitments %}
+        <div class="row">
+          <div>
+            <strong>{{ commitment.title }}</strong>
+            <small>{{ commitment.starts_at|date:"D, M j · g:i A" }} – {{ commitment.ends_at|date:"g:i A" }}</small>
+          </div>
+        </div>
+      {% endfor %}
+    {% endif %}
+  </section>
+
+  <div>
+    <section class="card" style="margin-bottom:1rem">
+      <div class="card-head"><h2>Waking hours</h2></div>
+      <form method="post">
+        {% csrf_token %}
+        {{ profile_form.as_p }}
+        <button name="save_profile" value="1" class="secondary">Save hours</button>
+      </form>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Add a recurring block</h2></div>
+      <form method="post">
+        {% csrf_token %}
+        {{ block_form.as_p }}
+        <button name="add_block" value="1">Add to my week</button>
+      </form>
+    </section>
+  </div>
+</div>
+{% endblock %}

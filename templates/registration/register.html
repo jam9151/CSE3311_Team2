@@ -1,2 +1,16 @@
 {% extends "base.html" %}
-{% block content %}<section class="form-card"><h1>Create your account</h1><form method="post">{% csrf_token %}{{ form.as_p }}<button>Get started</button></form></section>{% endblock %}
+{% block title %}Create account · MediaFlow{% endblock %}
+
+{% block content %}
+<section class="form-card card">
+  <p class="eyebrow">UTA students only</p>
+  <h1>Create your account</h1>
+  <p class="meta" style="margin-bottom:1.25rem">Sign up with your @mavs.uta.edu address.</p>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button>Get started</button>
+  </form>
+  <p class="meta" style="margin-top:1rem">Already have one? <a href="{% url 'login' %}">Sign in</a>.</p>
+</section>
+{% endblock %}

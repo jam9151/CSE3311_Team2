@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Review {{ item.title }} · MediaFlow{% endblock %}
+
+{% block content %}
+<section class="form-card card">
+  <p class="eyebrow">Review</p>
+  <h1>{{ item.title }}</h1>
+  <p class="meta" style="margin-bottom:1.25rem">
+    <span class="pill {{ item.media_type }}">{{ item.get_media_type_display }}</span>
+    {{ item.estimated_minutes }} min
+  </p>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <div class="actions">
+      <button>Save review</button>
+      <a class="button ghost" href="{% url 'reviews' %}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

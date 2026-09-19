@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}Calendar · MediaFlow{% endblock %}
+
+{% block content %}
+<header class="page-header">
+  <div>
+    <p class="eyebrow">Calendar</p>
+    <h1>{{ anchor|date:"F Y" }}</h1>
+  </div>
+  <div class="actions">
+    <a class="button small secondary" href="?year={{ previous_month.year }}&month={{ previous_month.month }}&date={{ selected|date:'Y-m-d' }}">&larr; Prev</a>
+    <a class="button small secondary" href="{% url 'calendar' %}">Today</a>
+    <a class="button small secondary" href="?year={{ next_month.year }}&month={{ next_month.month }}&date={{ selected|date:'Y-m-d' }}">Next &rarr;</a>
+  </div>
+</header>
+
+<div class="split">
+  <section class="card">
+    <table class="calendar">
+      <thead>
+        <tr>{% for name in weekday_names %}<th>{{ name }}</th>{% endfor %}</tr>
+      </thead>
+      <tbody>
+        {% for week in weeks %}
+          <tr>
+            {% for cell in week %}
+              <td>
+                <a class="cal-day{% if not cell.in_month %} muted{% endif %}{% if cell.is_today %} today{% endif %}{% if cell.date == selected %} selected{% endif %}"
+                   href="?year={{ anchor.year }}&month={{ anchor.month }}&date={{ cell.date|date:'Y-m-d' }}">
+                  <span class="num">{{ cell.date|date:"j" }}</span>
+                  {% for suggestion in cell.planned|slice:":2" %}
+                    <span class="cal-entry">{{ suggestion.backlog_item.title }}</span>
+                  {% endfor %}
+                  {% if cell.planned|length > 2 %}
+                    <span class="cal-more">+{{ cell.planned|length|add:"-2" }} more</span>
+                  {% endif %}
+                </a>
+              </td>
+            {% endfor %}
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+
+  <div>
+    <section class="card" style="margin-bottom:1rem">
+      <div class="card-head">
+        <h2>{{ selected|date:"l, F j" }}</h2>
+        <span class="pill accent">{{ free_label }} free</span>
+      </div>
+
+      <ul class="timeline">
+        {% for block in plan.busy %}
+          <li>
+            <span class="time">{{ block.start|time:"g:i A" }}–{{ block.end|time:"g:i A" }}</span>
+            <span class="busy-label">{{ block.label }}</span>
+          </li>
+        {% endfor %}
+        {% for entry in plan.planned %}
+          <li>
+            <span class="time">{{ entry.start_time|time:"g:i A" }}–{{ entry.end_time|time:"g:i A" }}</span>
+            <span><strong>{{ entry.backlog_item.title }}</strong></span>
+          </li>
+        {% endfor %}
+        {% for gap in plan.free %}
+          <li>
+            <span class="time">{{ gap.start|time:"g:i A" }}–{{ gap.end|time:"g:i A" }}</span>
+            <span class="free">Free &middot; {{ gap.minutes }} min</span>
+          </li>
+        {% endfor %}
+        {% if not plan.busy and not plan.planned and not plan.free %}
+          <li><span class="busy-label">Nothing scheduled, and no free time recorded.</span></li>
+        {% endif %}
+      </ul>
+
+      <form method="post" action="{% url 'refresh_suggestions' %}" style="margin-top:1rem">
+        {% csrf_token %}
+        <input type="hidden" name="date" value="{{ selected|date:'Y-m-d' }}">
+        <input type="hidden" name="next" value="{% url 'calendar' %}?date={{ selected|date:'Y-m-d' }}">
+        <button class="secondary small">Suggest something for this day</button>
+      </form>
+    </section>
+
+    {% if plan.pending %}
+      <section class="card">
+        <div class="card-head"><h2>Waiting on you</h2></div>
+        {% for suggestion in plan.pending %}
+          {% include "planner/_suggestion.html" with suggestion=suggestion next_url=request.get_full_path %}
+        {% endfor %}
+      </section>
+    {% endif %}
+  </div>
+</div>
+{% endblock %}

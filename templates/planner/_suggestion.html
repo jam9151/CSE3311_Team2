@@ -1,0 +1,35 @@
+{% comment %}
+One proposed sitting, with the accept / reject / done controls.
+Expects: suggestion, and `next_url` for where to return after responding.
+{% endcomment %}
+<article class="suggestion">
+  <span class="when">{{ suggestion.start_time|time:"g:i A" }} – {{ suggestion.end_time|time:"g:i A" }}</span>
+  <h3>{{ suggestion.backlog_item.title }}</h3>
+  <p class="meta">
+    <span class="pill {{ suggestion.backlog_item.media_type }}">{{ suggestion.backlog_item.get_media_type_display }}</span>
+    <span class="meta-dot"></span>{{ suggestion.minutes }} min
+    <span class="meta-dot"></span>Priority {{ suggestion.backlog_item.priority }}
+  </p>
+  <p class="why">{{ suggestion.reason }}</p>
+
+  <div class="actions">
+    {% if suggestion.status == "pending" %}
+      <form class="inline" method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'accept' %}">
+        {% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">
+        <button class="small">Add to calendar</button>
+      </form>
+      <form class="inline" method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'reject' %}">
+        {% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">
+        <button class="small ghost">Not today</button>
+      </form>
+    {% elif suggestion.status == "accepted" %}
+      <form class="inline" method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'done' %}">
+        {% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">
+        <button class="small secondary">Mark done</button>
+      </form>
+      <span class="pill accent">Planned</span>
+    {% else %}
+      <span class="pill">Completed</span>
+    {% endif %}
+  </div>
+</article>

@@ -1,2 +1,36 @@
 {% extends "base.html" %}
-{% block content %}<section class="hero"><p class="eyebrow">YOUR BACKLOG, IN MOTION</p><h1>Make time for the stories you keep meaning to start.</h1><p>MediaFlow turns your movies, shows, books, and games into a realistic weekly plan built around your life.</p><div class="actions"><a class="button" href="{% url 'register' %}">Create an account</a><a class="button secondary" href="{% url 'login' %}">Sign in</a></div></section>{% endblock %}
+{% block title %}MediaFlow · Your backlog, scheduled{% endblock %}
+
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">For UTA students</p>
+  <h1>The problem is not finding something. It is deciding what to start.</h1>
+  <p class="lede" style="margin: 0 auto">
+    MediaFlow keeps your films, shows, books, and games in one backlog, reads the gaps in your week,
+    and tells you what actually fits the time you have tonight.
+  </p>
+  <div class="actions">
+    <a class="button" href="{% url 'register' %}">Create your account</a>
+    <a class="button secondary" href="{% url 'login' %}">Sign in</a>
+  </div>
+</section>
+
+<div class="feature-grid">
+  <div class="feature">
+    <h3>One backlog, four media</h3>
+    <p>Letterboxd does films. Goodreads does books. Backloggd does games. Yours holds all of them, plus TV.</p>
+  </div>
+  <div class="feature">
+    <h3>It reads your week</h3>
+    <p>Enter your classes, shifts, and standing plans once. MediaFlow works out when you are actually free.</p>
+  </div>
+  <div class="feature">
+    <h3>It fits the gap</h3>
+    <p>Three hours before bed gets a film. Forty minutes between classes gets a chapter, not a 90-minute movie.</p>
+  </div>
+  <div class="feature">
+    <h3>It learns from a no</h3>
+    <p>Turn a suggestion down and it stops pushing that title for a while. Accept one and it lands on your calendar.</p>
+  </div>
+</div>
+{% endblock %}

@@ -1,2 +1,14 @@
 {% extends "base.html" %}
-{% block content %}<section class="form-card"><h1>Welcome back</h1><form method="post">{% csrf_token %}{{ form.as_p }}<button>Sign in</button></form><p>New here? <a href="{% url 'register' %}">Create an account</a>.</p></section>{% endblock %}
+{% block title %}Sign in · MediaFlow{% endblock %}
+
+{% block content %}
+<section class="form-card card">
+  <h1>Welcome back</h1>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <button>Sign in</button>
+  </form>
+  <p class="meta" style="margin-top:1rem">New here? <a href="{% url 'register' %}">Create an account</a>.</p>
+</section>
+{% endblock %}

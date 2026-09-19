@@ -1,2 +1,16 @@
 {% extends "base.html" %}
-{% block content %}<section class="form-card"><h1>Add details</h1><form method="post">{% csrf_token %}{{ form.as_p }}<button>Save</button> <a href="{% url 'dashboard' %}">Cancel</a></form></section>{% endblock %}
+{% block title %}{{ heading }} · MediaFlow{% endblock %}
+
+{% block content %}
+<section class="form-card card">
+  <h1>{{ heading }}</h1>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <div class="actions">
+      <button>Save</button>
+      <a class="button ghost" href="{% url cancel_url %}">Cancel</a>
+    </div>
+  </form>
+</section>
+{% endblock %}
