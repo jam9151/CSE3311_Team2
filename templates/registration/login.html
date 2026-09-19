@@ -2,13 +2,13 @@
 {% block title %}Sign in · MediaFlow{% endblock %}
 
 {% block content %}
-<section class="card mx-auto my-8 max-w-md">
-  <h1 class="mb-4 text-2xl font-bold tracking-tight">Welcome back</h1>
+<section class="mx-auto max-w-sm pt-6">
+  <h1 class="mb-6 font-display text-5xl leading-none">Welcome back.</h1>
   <form method="post">
     {% csrf_token %}
     {{ form.as_p }}
-    <button class="btn">Sign in</button>
+    <button class="btn w-full justify-center">Sign in</button>
   </form>
-  <p class="mt-4 text-sm text-muted">New here? <a href="{% url 'register' %}">Create an account</a>.</p>
+  <p class="mt-6 text-sm text-muted">New here? <a href="{% url 'register' %}">Make an account</a>.</p>
 </section>
 {% endblock %}

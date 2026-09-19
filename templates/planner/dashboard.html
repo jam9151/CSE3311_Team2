@@ -1,130 +1,94 @@
 {% extends "base.html" %}
+{% load planner_extras %}
 {% block title %}Today · MediaFlow{% endblock %}
 
 {% block content %}
-<header class="mb-5 flex flex-wrap items-end justify-between gap-4">
-  <div>
-    <p class="eyebrow">{% now "l, F j" %}</p>
-    <h1 class="text-3xl font-bold tracking-tight">What should I start tonight?</h1>
-  </div>
-  <form method="post" action="{% url 'refresh_suggestions' %}">
-    {% csrf_token %}
-    <input type="hidden" name="next" value="{% url 'dashboard' %}">
-    <button class="btn">Suggest something</button>
-  </form>
-</header>
+<p class="text-sm text-muted">{% now "l, F j" %}</p>
+<h1 class="mt-1 mb-8 max-w-3xl font-display text-5xl leading-[1.05] sm:text-6xl">
+  {% if free_minutes %}
+    You have <em class="text-accent">{{ free_label }}</em> free today.
+  {% else %}
+    Nothing free left today.
+  {% endif %}
+</h1>
 
 {% if needs_schedule %}
-  <div class="mb-5 rounded-lg border border-accent/30 bg-accent/10 px-3.5 py-2.5 text-sm">
-    We can't find your free time yet. <a href="{% url 'weekly_schedule' %}">Tell us when you're busy</a> and the rest follows.
-  </div>
+  <p class="mb-8 border-l-2 border-accent py-1 pl-3 text-sm">
+    We don't know when you're busy yet, so all of today looks free.
+    <a href="{% url 'weekly_schedule' %}">Add your classes and shifts</a> first.
+  </p>
 {% endif %}
 
-<div class="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-  <div class="card">
-    <div class="text-2xl font-bold tracking-tight">{{ free_label }}</div>
-    <div class="text-xs uppercase tracking-wider text-muted">Free today</div>
-  </div>
-  <div class="card">
-    <div class="text-2xl font-bold tracking-tight">{% if longest_gap %}{{ longest_gap.label }}{% else %}&mdash;{% endif %}</div>
-    <div class="text-xs uppercase tracking-wider text-muted">Longest gap</div>
-  </div>
-  <div class="card">
-    <div class="text-2xl font-bold tracking-tight">{{ backlog_count }}</div>
-    <div class="text-xs uppercase tracking-wider text-muted">In your backlog</div>
-  </div>
-  <div class="card">
-    <div class="text-2xl font-bold tracking-tight">{{ plan.planned|length }}</div>
-    <div class="text-xs uppercase tracking-wider text-muted">Planned today</div>
-  </div>
-</div>
+<section class="mb-14">
+  {% include "planner/_day_strip.html" with strip=strip %}
+</section>
 
-<div class="grid items-start gap-5 lg:grid-cols-[3fr_2fr]">
-  <div class="space-y-4">
-    <section class="card">
-      <div class="card-head">
-        <h2>Suggestions for today</h2>
-        <a class="text-sm" href="{% url 'calendar' %}">Open calendar</a>
+<div class="grid gap-x-14 gap-y-12 lg:grid-cols-[1fr_20rem]">
+  <div>
+    <section class="mb-12">
+      <div class="section-head">
+        <h2>Suggested for today</h2>
+        <form method="post" action="{% url 'refresh_suggestions' %}">
+          {% csrf_token %}
+          <input type="hidden" name="next" value="{% url 'dashboard' %}">
+          <button class="btn-link">{% if plan.pending %}Try again{% else %}Suggest something{% endif %}</button>
+        </form>
       </div>
       {% for suggestion in plan.pending %}
         {% include "planner/_suggestion.html" with suggestion=suggestion next_url="/dashboard/" %}
       {% empty %}
-        <p class="empty">No open suggestions. Hit <strong>Suggest something</strong> and we'll look at the gaps in your day.</p>
+        <p class="empty">Nothing suggested yet. Hit “Suggest something” and we'll fill the gaps above.</p>
       {% endfor %}
     </section>
 
-    <section class="card">
-      <div class="card-head"><h2>Planned today</h2></div>
+    <section>
+      <div class="section-head"><h2>On the calendar today</h2></div>
       {% for suggestion in plan.planned %}
         {% include "planner/_suggestion.html" with suggestion=suggestion next_url="/dashboard/" %}
       {% empty %}
-        <p class="empty">Nothing on the calendar for today yet.</p>
+        <p class="empty">Nothing planned yet.</p>
       {% endfor %}
     </section>
   </div>
 
-  <div class="space-y-4">
-    <section class="card">
-      <div class="card-head">
-        <h2>Your day</h2>
-        <a class="text-sm" href="{% url 'weekly_schedule' %}">Edit</a>
+  <aside>
+    <section class="mb-12">
+      <div class="section-head">
+        <h2>Up next</h2>
+        <a class="text-sm text-muted" href="{% url 'backlog' %}">All {{ backlog_count }}</a>
       </div>
-      <ul class="text-sm">
-        {% for block in plan.busy %}
-          <li class="row">
-            <span class="w-32 shrink-0 text-xs tabular-nums text-muted">{{ block.start|time:"g:i A" }}–{{ block.end|time:"g:i A" }}</span>
-            <span class="flex-1 text-muted">{{ block.label }}</span>
-          </li>
-        {% endfor %}
-        {% for gap in plan.free %}
-          <li class="row">
-            <span class="w-32 shrink-0 text-xs tabular-nums text-muted">{{ gap.start|time:"g:i A" }}–{{ gap.end|time:"g:i A" }}</span>
-            <span class="flex-1 text-good">Free &middot; {{ gap.minutes }} min</span>
+      <ol>
+        {% for item in backlog %}
+          <li class="flex gap-3 border-b border-line py-3">
+            <span class="w-4 pt-px text-sm tabular-nums text-faint">{{ forloop.counter }}</span>
+            <div class="min-w-0 flex-1">
+              <div class="truncate font-medium">{{ item.title }}</div>
+              <div class="flex items-center gap-3">
+                <span class="tag tag-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
+                <span class="text-xs text-muted">{{ item.remaining_minutes|duration }} left</span>
+              </div>
+              {% if item.minutes_completed %}
+                <div class="mt-2 h-0.5 bg-line"><div class="h-full bg-ink" style="width: {{ item.percent_complete }}%"></div></div>
+              {% endif %}
+            </div>
           </li>
         {% empty %}
-          <li class="row text-muted">No free time left today.</li>
+          <li class="empty">Your backlog's empty. <a href="{% url 'discover' %}">Find something</a>.</li>
         {% endfor %}
-      </ul>
-    </section>
-
-    <section class="card">
-      <div class="card-head">
-        <h2>Backlog</h2>
-        <a class="text-sm" href="{% url 'backlog' %}">See all</a>
-      </div>
-      {% for item in backlog %}
-        <div class="row">
-          <div class="flex-1">
-            <strong>{{ item.title }}</strong>
-            <p class="text-xs text-muted">
-              <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
-              {{ item.remaining_minutes }} min left &middot; {{ item.priority_label }}
-            </p>
-            {% if item.minutes_completed %}
-              <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-2">
-                <div class="h-full bg-good" style="width: {{ item.percent_complete }}%"></div>
-              </div>
-            {% endif %}
-          </div>
-        </div>
-      {% empty %}
-        <p class="empty">Nothing here yet. <a href="{% url 'discover' %}">Find something to add</a>.</p>
-      {% endfor %}
+      </ol>
     </section>
 
     {% if upcoming %}
-      <section class="card">
-        <div class="card-head"><h2>Coming up</h2></div>
+      <section>
+        <div class="section-head"><h2>Later this week</h2></div>
         {% for suggestion in upcoming %}
-          <div class="row">
-            <div>
-              <strong>{{ suggestion.backlog_item.title }}</strong>
-              <p class="text-xs text-muted">{{ suggestion.date|date:"D, M j" }} at {{ suggestion.start_time|time:"g:i A" }}</p>
-            </div>
+          <div class="border-b border-line py-3">
+            <div class="font-medium">{{ suggestion.backlog_item.title }}</div>
+            <div class="text-xs text-muted">{{ suggestion.date|date:"l" }}, {{ suggestion.start_time|time:"g:i A" }}</div>
           </div>
         {% endfor %}
       </section>
     {% endif %}
-  </div>
+  </aside>
 </div>
 {% endblock %}

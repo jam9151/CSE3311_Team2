@@ -2,25 +2,22 @@
 {% block title %}Calendar · MediaFlow{% endblock %}
 
 {% block content %}
-<header class="mb-5 flex flex-wrap items-end justify-between gap-4">
-  <div>
-    <p class="eyebrow">Calendar</p>
-    <h1 class="text-3xl font-bold tracking-tight">{{ anchor|date:"F Y" }}</h1>
+<div class="mb-8 flex flex-wrap items-end justify-between gap-4">
+  <h1 class="font-display text-5xl leading-none">{{ anchor|date:"F" }} <span class="text-faint italic">{{ anchor|date:"Y" }}</span></h1>
+  <div class="flex items-baseline gap-4 text-sm">
+    <a href="?year={{ previous_month.year }}&month={{ previous_month.month }}&date={{ selected|date:'Y-m-d' }}">&larr; {{ previous_month|date:"M" }}</a>
+    <a href="{% url 'calendar' %}">Today</a>
+    <a href="?year={{ next_month.year }}&month={{ next_month.month }}&date={{ selected|date:'Y-m-d' }}">{{ next_month|date:"M" }} &rarr;</a>
   </div>
-  <div class="flex gap-2">
-    <a class="btn btn-sm btn-secondary" href="?year={{ previous_month.year }}&month={{ previous_month.month }}&date={{ selected|date:'Y-m-d' }}">&larr; Prev</a>
-    <a class="btn btn-sm btn-secondary" href="{% url 'calendar' %}">Today</a>
-    <a class="btn btn-sm btn-secondary" href="?year={{ next_month.year }}&month={{ next_month.month }}&date={{ selected|date:'Y-m-d' }}">Next &rarr;</a>
-  </div>
-</header>
+</div>
 
-<div class="grid items-start gap-5 lg:grid-cols-[3fr_2fr]">
-  <section class="card overflow-x-auto">
+<div class="grid gap-x-14 gap-y-12 lg:grid-cols-[1fr_22rem]">
+  <div class="overflow-x-auto">
     <table class="w-full min-w-[520px] table-fixed border-collapse">
       <thead>
         <tr>
           {% for name in weekday_names %}
-            <th class="pb-2 text-[0.7rem] font-semibold uppercase tracking-wider text-muted">{{ name }}</th>
+            <th class="border-b border-ink pb-2 text-left text-xs font-medium text-muted">{{ name }}</th>
           {% endfor %}
         </tr>
       </thead>
@@ -28,17 +25,16 @@
         {% for week in weeks %}
           <tr>
             {% for cell in week %}
-              <td class="h-22 border border-line p-0 align-top">
+              <td class="h-24 border-b border-line p-0 align-top">
                 <a href="?year={{ anchor.year }}&month={{ anchor.month }}&date={{ cell.date|date:'Y-m-d' }}"
-                   class="block h-full p-1.5 text-xs text-ink hover:bg-surface-2 hover:no-underline
-                          {% if cell.date == selected %}bg-accent/15 ring-1 ring-accent ring-inset{% endif %}">
-                  <span class="font-semibold tabular-nums
-                    {% if cell.is_today %}text-accent{% elif not cell.in_month %}text-muted/50{% endif %}">{{ cell.date|date:"j" }}</span>
+                   class="block h-full px-1 py-2 no-underline hover:bg-card {% if cell.date == selected %}bg-card{% endif %}">
+                  <span class="inline-grid size-6 place-items-center rounded-full text-sm tabular-nums
+                    {% if cell.is_today %}bg-accent text-white{% elif cell.date == selected %}bg-ink text-paper{% elif not cell.in_month %}text-faint{% endif %}">{{ cell.date|date:"j" }}</span>
                   {% for suggestion in cell.planned|slice:":2" %}
-                    <span class="mt-1 block truncate rounded border-l-2 border-good bg-surface-2 px-1 py-px text-[0.68rem]">{{ suggestion.backlog_item.title }}</span>
+                    <span class="mt-1 block truncate border-l-2 border-accent pl-1.5 text-[11px] text-ink">{{ suggestion.backlog_item.title }}</span>
                   {% endfor %}
                   {% if cell.planned|length > 2 %}
-                    <span class="mt-1 block text-[0.65rem] text-muted">+{{ cell.planned|length|add:"-2" }} more</span>
+                    <span class="mt-1 block pl-2 text-[11px] text-muted">+{{ cell.planned|length|add:"-2" }} more</span>
                   {% endif %}
                 </a>
               </td>
@@ -47,55 +43,39 @@
         {% endfor %}
       </tbody>
     </table>
-  </section>
+  </div>
 
-  <div class="space-y-4">
-    <section class="card">
-      <div class="card-head">
-        <h2>{{ selected|date:"l, F j" }}</h2>
-        <span class="pill pill-accent">{{ free_label }} free</span>
-      </div>
+  <aside>
+    <h2 class="font-display text-3xl leading-tight">{{ selected|date:"l" }}<span class="text-faint">, {{ selected|date:"F j" }}</span></h2>
+    <p class="mb-4 text-sm text-muted">{{ free_label }} free</p>
 
-      <ul class="text-sm">
-        {% for block in plan.busy %}
-          <li class="row">
-            <span class="w-32 shrink-0 text-xs tabular-nums text-muted">{{ block.start|time:"g:i A" }}–{{ block.end|time:"g:i A" }}</span>
-            <span class="flex-1 text-muted">{{ block.label }}</span>
-          </li>
-        {% endfor %}
-        {% for entry in plan.planned %}
-          <li class="row">
-            <span class="w-32 shrink-0 text-xs tabular-nums text-muted">{{ entry.start_time|time:"g:i A" }}–{{ entry.end_time|time:"g:i A" }}</span>
-            <strong class="flex-1">{{ entry.backlog_item.title }}</strong>
-          </li>
-        {% endfor %}
-        {% for gap in plan.free %}
-          <li class="row">
-            <span class="w-32 shrink-0 text-xs tabular-nums text-muted">{{ gap.start|time:"g:i A" }}–{{ gap.end|time:"g:i A" }}</span>
-            <span class="flex-1 text-good">Free &middot; {{ gap.minutes }} min</span>
-          </li>
-        {% endfor %}
-        {% if not plan.busy and not plan.planned and not plan.free %}
-          <li class="row text-muted">Nothing scheduled, and no free time recorded.</li>
-        {% endif %}
-      </ul>
+    {% include "planner/_day_strip.html" with strip=strip %}
 
-      <form class="mt-4" method="post" action="{% url 'refresh_suggestions' %}">
-        {% csrf_token %}
-        <input type="hidden" name="date" value="{{ selected|date:'Y-m-d' }}">
-        <input type="hidden" name="next" value="{% url 'calendar' %}?date={{ selected|date:'Y-m-d' }}">
-        <button class="btn btn-sm btn-secondary">Suggest something for this day</button>
-      </form>
-    </section>
+    <ul class="mt-6 text-sm">
+      {% for block in plan.busy %}
+        <li class="row justify-start"><span class="w-20 shrink-0 tabular-nums text-muted">{{ block.start|time:"g:i A" }}</span><span class="text-muted">{{ block.label }}</span></li>
+      {% endfor %}
+      {% for entry in plan.planned %}
+        <li class="row justify-start"><span class="w-20 shrink-0 tabular-nums text-muted">{{ entry.start_time|time:"g:i A" }}</span><span class="font-medium text-accent">{{ entry.backlog_item.title }}</span></li>
+      {% endfor %}
+      {% if not plan.busy and not plan.planned %}
+        <li class="empty">Nothing scheduled.</li>
+      {% endif %}
+    </ul>
+
+    <form class="mt-5" method="post" action="{% url 'refresh_suggestions' %}">
+      {% csrf_token %}
+      <input type="hidden" name="date" value="{{ selected|date:'Y-m-d' }}">
+      <input type="hidden" name="next" value="{% url 'calendar' %}?date={{ selected|date:'Y-m-d' }}">
+      <button class="btn btn-sm btn-secondary">Suggest something for this day</button>
+    </form>
 
     {% if plan.pending %}
-      <section class="card">
-        <div class="card-head"><h2>Waiting on you</h2></div>
-        {% for suggestion in plan.pending %}
-          {% include "planner/_suggestion.html" with suggestion=suggestion next_url=request.get_full_path %}
-        {% endfor %}
-      </section>
+      <div class="section-head mt-10"><h2>Waiting on you</h2></div>
+      {% for suggestion in plan.pending %}
+        {% include "planner/_suggestion.html" with suggestion=suggestion next_url=request.get_full_path %}
+      {% endfor %}
     {% endif %}
-  </div>
+  </aside>
 </div>
 {% endblock %}

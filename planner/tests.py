@@ -6,7 +6,7 @@ from django.utils import timezone
 
 from .forms import RegisterForm
 from .models import BacklogItem, CatalogItem, Commitment, MediaType, Profile, RecurringBlock, Suggestion
-from .services import free_intervals, humanize_minutes, month_grid, suggest_for_day, total_free_minutes
+from .services import day_strip, free_intervals, humanize_minutes, month_grid, suggest_for_day, total_free_minutes
 
 # A Tuesday. Most of these tests pin a fixed date because free_intervals()
 # clips gaps that have already passed when the day is today, which would make
@@ -181,6 +181,17 @@ class HelperTests(TestCase):
         self.assertEqual(humanize_minutes(45), "45 min")
         self.assertEqual(humanize_minutes(120), "2h")
         self.assertEqual(humanize_minutes(200), "3h 20m")
+
+    def test_day_strip_positions(self):
+        user = make_user("strip")  # awake 8:00-23:00, so 15 hours wide
+        RecurringBlock.objects.create(
+            user=user, label="Class", weekday=TEST_DAY.weekday(), start_time=time(11), end_time=time(14)
+        )
+        strip = day_strip(user, TEST_DAY)
+        seg = strip["segments"][0]
+        # 11:00 is 3h into a 15h day, and the class is 3h long: 20% and 20%.
+        self.assertEqual((seg["left"], seg["width"]), (20.0, 20.0))
+        self.assertEqual(strip["ticks"][0], {"left": 0.0, "label": "8a"})
 
     def test_month_grid_sunday_first(self):
         weeks = month_grid(make_user("grid"), 2026, 10)

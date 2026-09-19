@@ -2,14 +2,14 @@
 {% block title %}{{ heading }} · MediaFlow{% endblock %}
 
 {% block content %}
-<section class="card mx-auto my-8 max-w-md">
-  <h1 class="mb-4 text-2xl font-bold tracking-tight">{{ heading }}</h1>
+<section class="mx-auto max-w-md">
+  <h1 class="mb-6 font-display text-4xl leading-tight">{{ heading }}</h1>
   <form method="post">
     {% csrf_token %}
     {{ form.as_p }}
-    <div class="flex gap-2">
+    <div class="flex items-baseline gap-5 pt-2">
       <button class="btn">Save</button>
-      <a class="btn btn-ghost" href="{% url cancel_url %}">Cancel</a>
+      <a class="text-sm text-muted" href="{% url cancel_url %}">Cancel</a>
     </div>
   </form>
 </section>

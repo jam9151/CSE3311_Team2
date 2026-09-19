@@ -1,66 +1,52 @@
 {% extends "base.html" %}
+{% load planner_extras %}
 {% block title %}{{ item.title }} · MediaFlow{% endblock %}
 
 {% block content %}
-<p class="mb-4 text-sm"><a href="{% url 'discover' %}">&larr; Back to discover</a></p>
+<a class="text-sm text-muted" href="{% url 'discover' %}">&larr; Discover</a>
 
-<div class="grid items-start gap-5 lg:grid-cols-[3fr_2fr]">
-  <section class="card">
-    <div class="mb-2 flex gap-1">
-      <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
-      {% if item.genre %}<span class="pill">{{ item.genre }}</span>{% endif %}
-    </div>
-    <h1 class="text-3xl font-bold tracking-tight">{{ item.title }}</h1>
-    <p class="text-sm text-muted">
-      {{ item.creator }}{% if item.release_date %} &middot; Released {{ item.release_date|date:"F j, Y" }}{% endif %}
+<div class="mt-6 grid gap-x-14 gap-y-10 lg:grid-cols-[1fr_20rem]">
+  <article>
+    <span class="tag tag-{{ item.media_type }}">{{ item.get_media_type_display }}{% if item.genre %} &middot; {{ item.genre }}{% endif %}</span>
+    <h1 class="mt-2 font-display text-6xl leading-[1.02]">{{ item.title }}</h1>
+    <p class="mt-3 text-muted">
+      {{ item.creator }}{% if item.release_date %}, {{ item.release_date|date:"F j, Y" }}{% endif %}
     </p>
-    <p class="mt-4">{{ item.description }}</p>
-  </section>
+    <p class="mt-8 max-w-prose text-lg leading-relaxed">{{ item.description }}</p>
+  </article>
 
-  <div class="space-y-4">
-    <section class="card">
-      <div class="card-head"><h2>At a glance</h2></div>
-      <div class="row">
-        <div><strong>Estimated time</strong><p class="text-xs text-muted">Typical time to finish</p></div>
-        <span>{{ item.typical_minutes }} min</span>
-      </div>
+  <aside>
+    <dl class="mb-8 text-sm">
+      <div class="row"><dt class="text-muted">Time to finish</dt><dd class="tabular-nums">{{ item.typical_minutes|duration }}</dd></div>
       {% if item.rating %}
-        <div class="row">
-          <div><strong>Rating</strong><p class="text-xs text-muted">Aggregate score</p></div>
-          <span>{{ item.rating }}/10</span>
-        </div>
+        <div class="row"><dt class="text-muted">Rating</dt><dd class="tabular-nums">{{ item.rating }}/10</dd></div>
       {% endif %}
       <div class="row">
-        <div><strong>Fits today?</strong><p class="text-xs text-muted">Against your longest free gap</p></div>
-        {% if fits_today is None %}
-          <span class="pill">No free time</span>
-        {% elif fits_today %}
-          <span class="pill pill-accent">Yes</span>
-        {% else %}
-          <span class="pill">Not in one sitting</span>
-        {% endif %}
+        <dt class="text-muted">Fits in a gap today?</dt>
+        <dd>
+          {% if fits_today is None %}No free time
+          {% elif fits_today %}<span class="text-good">Yes</span>
+          {% else %}Not in one sitting{% endif %}
+        </dd>
       </div>
-    </section>
+    </dl>
 
-    <section class="card">
-      {% if entry %}
-        <p class="mb-3 text-sm text-muted">On your backlog at priority {{ entry.priority }} ({{ entry.priority_label }}).</p>
-        <div class="flex gap-2">
-          <a class="btn btn-sm btn-secondary" href="{% url 'backlog_edit' entry.pk %}">Edit</a>
-          <form method="post" action="{% url 'backlog_delete' entry.pk %}">
-            {% csrf_token %}
-            <button class="btn btn-sm btn-danger">Remove from backlog</button>
-          </form>
-        </div>
-      {% else %}
-        <p class="mb-3 text-sm text-muted">Not on your backlog yet.</p>
-        <form method="post" action="{% url 'add_from_catalog' item.pk %}">
+    {% if entry %}
+      <p class="mb-3 text-sm text-muted">On your backlog, priority {{ entry.priority }} ({{ entry.priority_label|lower }}).</p>
+      <div class="flex items-center gap-4">
+        <a class="btn btn-sm btn-secondary" href="{% url 'backlog_edit' entry.pk %}">Edit</a>
+        <form method="post" action="{% url 'backlog_delete' entry.pk %}">
           {% csrf_token %}
-          <input type="hidden" name="next" value="{{ request.get_full_path }}">
-          <button class="btn">Add to my backlog</button>
+          <button class="btn-link-danger">Remove from backlog</button>
         </form>
-      {% endif %}
-    </section>
-  </div>
+      </div>
+    {% else %}
+      <form method="post" action="{% url 'add_from_catalog' item.pk %}">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{{ request.get_full_path }}">
+        <button class="btn w-full justify-center">Add to my backlog</button>
+      </form>
+    {% endif %}
+  </aside>
 </div>
 {% endblock %}

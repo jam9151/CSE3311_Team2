@@ -1,36 +1,56 @@
 {% extends "base.html" %}
-{% block title %}MediaFlow · Your backlog, scheduled{% endblock %}
+{% block title %}MediaFlow{% endblock %}
 
 {% block content %}
-<section class="mx-auto max-w-2xl px-4 pt-14 pb-8 text-center">
-  <p class="eyebrow">For UTA students</p>
-  <h1 class="mb-3 text-4xl font-bold tracking-tight">The problem is not finding something. It is deciding what to start.</h1>
-  <p class="text-muted">
-    MediaFlow keeps your films, shows, books, and games in one backlog, reads the gaps in your week,
-    and tells you what actually fits the time you have tonight.
-  </p>
-  <div class="mt-6 flex justify-center gap-2">
-    <a class="btn" href="{% url 'register' %}">Create your account</a>
-    <a class="btn btn-secondary" href="{% url 'login' %}">Sign in</a>
+<section class="grid items-end gap-x-16 gap-y-12 pt-6 pb-16 lg:grid-cols-[1.2fr_1fr]">
+  <div>
+    <h1 class="font-display text-6xl leading-[1.02] sm:text-7xl">
+      You don't need more to watch. You need help deciding what to start.
+    </h1>
+    <p class="mt-6 max-w-lg text-lg text-muted">
+      Films, shows, books and games in one backlog. Tell it when you're busy, and it tells you what actually fits the time you've got tonight.
+    </p>
+    <div class="mt-8 flex items-baseline gap-6">
+      <a class="btn" href="{% url 'register' %}">Sign up with your UTA email</a>
+      <a href="{% url 'login' %}">Sign in</a>
+    </div>
   </div>
+
+  {# A hand-built example of the dashboard, so people see the idea before signing up. #}
+  <figure class="rounded-lg border border-line bg-card p-6">
+    <p class="text-sm text-muted">Tuesday</p>
+    <p class="font-display text-3xl leading-tight">You have <em class="text-accent">4h 10m</em> free.</p>
+
+    <div class="relative mt-5 h-10 overflow-hidden rounded-md border border-line bg-paper">
+      <div class="strip-busy absolute inset-y-0" style="left: 17%; width: 10%"></div>
+      <div class="strip-busy absolute inset-y-0" style="left: 33%; width: 10%"></div>
+      <div class="strip-busy absolute inset-y-0" style="left: 50%; width: 13%"></div>
+      <div class="strip-planned absolute inset-y-0 flex items-center px-1.5 text-[11px]" style="left: 73%; width: 17%">Arrival</div>
+    </div>
+    <div class="mt-1.5 flex justify-between text-[11px] text-faint"><span>8a</span><span>2p</span><span>11p</span></div>
+
+    <div class="mt-6 grid grid-cols-[4rem_1fr] gap-4 border-t border-line pt-4">
+      <span class="pt-1 text-sm tabular-nums">7:30 PM</span>
+      <div>
+        <p class="font-display text-2xl leading-tight">Arrival</p>
+        <p class="text-sm text-muted">You have 2h 40m free and its 1h 56m runtime fits in one sitting.</p>
+      </div>
+    </div>
+  </figure>
 </section>
 
-<div class="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-  <div class="card">
-    <h3 class="mb-1 font-semibold">One backlog, four media</h3>
-    <p class="text-sm text-muted">Letterboxd does films. Goodreads does books. Backloggd does games. Yours holds all of them, plus TV.</p>
+<section class="grid gap-x-12 gap-y-8 border-t border-ink pt-8 md:grid-cols-3">
+  <div>
+    <h2 class="font-display text-2xl">It reads your week</h2>
+    <p class="mt-1 text-muted">Classes, shifts and plans go in once. The gaps between them are what it works with.</p>
   </div>
-  <div class="card">
-    <h3 class="mb-1 font-semibold">It reads your week</h3>
-    <p class="text-sm text-muted">Enter your classes, shifts, and standing plans once. MediaFlow works out when you're actually free.</p>
+  <div>
+    <h2 class="font-display text-2xl">It knows a film isn't a book</h2>
+    <p class="mt-1 text-muted">Forty minutes between classes gets a chapter. A free evening gets the movie you've been putting off.</p>
   </div>
-  <div class="card">
-    <h3 class="mb-1 font-semibold">It fits the gap</h3>
-    <p class="text-sm text-muted">Three hours before bed gets a film. Forty minutes between classes gets a chapter, not a 90-minute movie.</p>
+  <div>
+    <h2 class="font-display text-2xl">It takes no for an answer</h2>
+    <p class="mt-1 text-muted">Turn a suggestion down and it backs off that title for a couple of weeks.</p>
   </div>
-  <div class="card">
-    <h3 class="mb-1 font-semibold">It learns from a no</h3>
-    <p class="text-sm text-muted">Turn a suggestion down and it backs off that title for a while. Accept one and it lands on your calendar.</p>
-  </div>
-</div>
+</section>
 {% endblock %}

@@ -10,50 +10,50 @@
 @source not "../../.venv";
 @source "../../templates";
 
+/* Fonts are loaded from Google Fonts in base.html. */
 @theme {
-  --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-sans: "Hanken Grotesk", ui-sans-serif, system-ui, sans-serif;
+  --font-display: "Instrument Serif", Georgia, serif;
 
-  --color-bg: #0e1116;
-  --color-surface: #171b23;
-  --color-surface-2: #1f242e;
-  --color-line: #2a313d;
-  --color-ink: #e7ebf2;
-  --color-muted: #98a2b3;
-  --color-accent: #6ea8fe;
-  --color-on-accent: #0b1020;
-  --color-good: #5fd4a0;
-  --color-warn: #f2c14e;
-  --color-bad: #f2777a;
+  /* Warm paper rather than pure white; the ink is nearly black. One accent
+     colour, used sparingly, so it actually means something when it shows up. */
+  --color-paper: #f5f2ec;
+  --color-card: #fbf9f5;
+  --color-ink: #1c1a17;
+  --color-muted: #6f695f;
+  --color-faint: #a39c90;
+  --color-line: #e2dcd1;
+  --color-accent: #d24b1f;
+  --color-good: #2f7d4f;
+  --color-bad: #b42318;
 
-  /* one colour per media type, used by the pills */
-  --color-movie: #f0a6ca;
-  --color-tv: #a6c8f0;
-  --color-book: #f2c14e;
-  --color-game: #5fd4a0;
+  --color-movie: #b0305c;
+  --color-tv: #2d5bc4;
+  --color-book: #9a6a0a;
+  --color-game: #2f7d4f;
 }
 
 /* Django renders form fields itself ({{ form.as_p }}), so we can't put
    classes on the inputs. Style the bare elements instead. */
 @layer base {
   body {
-    @apply bg-bg text-ink text-[15px] leading-relaxed;
+    @apply bg-paper font-sans text-[15px] leading-relaxed text-ink antialiased;
   }
   a {
-    @apply text-accent hover:underline;
+    @apply text-ink underline decoration-line decoration-1 underline-offset-4 hover:decoration-ink;
+  }
+  ::selection {
+    @apply bg-accent text-white;
   }
   label {
-    @apply mb-1 block text-sm text-muted;
+    @apply mb-1 block text-sm font-medium;
   }
   input:where([type="text"], [type="email"], [type="password"], [type="number"],
     [type="time"], [type="date"], [type="datetime-local"]),
   select,
   textarea {
-    @apply w-full rounded-lg border border-line bg-bg px-2.5 py-2 text-sm text-ink
-      focus:border-accent focus:outline-2 focus:outline-accent/20;
-  }
-  /* time pickers are unreadable in dark mode otherwise */
-  input, select {
-    color-scheme: dark;
+    @apply w-full rounded-md border border-line bg-card px-3 py-2 text-sm text-ink
+      placeholder:text-faint focus:border-ink focus:outline-none;
   }
   form p {
     @apply mb-4;
@@ -62,70 +62,83 @@
     @apply mt-1 block text-xs text-muted;
   }
   ul.errorlist {
-    @apply my-1 list-disc pl-4 text-sm text-bad;
+    @apply my-1 text-sm text-bad;
   }
 }
 
-/* Things used on nearly every page. Anything one-off stays as utilities in
-   the template. */
 @layer components {
   .btn {
-    @apply inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-transparent
-      bg-accent px-3.5 py-2 text-sm font-semibold text-on-accent
-      hover:no-underline hover:brightness-110;
+    @apply inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-ink bg-ink px-4 py-2
+      text-sm font-medium text-paper no-underline transition-colors hover:bg-ink/85 hover:text-paper;
+  }
+  .btn-accent {
+    @apply border-accent bg-accent text-white hover:bg-accent/90;
   }
   .btn-secondary {
-    @apply border-line bg-surface-2 text-ink;
+    @apply border-line bg-transparent text-ink hover:border-ink hover:bg-transparent hover:text-ink;
   }
   .btn-ghost {
-    @apply border-line bg-transparent text-muted hover:text-ink;
-  }
-  .btn-danger {
-    @apply border-line bg-transparent text-bad;
+    @apply border-transparent bg-transparent px-2 text-muted hover:bg-transparent hover:text-ink;
   }
   .btn-sm {
-    @apply px-2.5 py-1 text-xs;
+    @apply px-3 py-1.5 text-[13px];
   }
   .btn-link {
-    @apply cursor-pointer border-0 bg-transparent p-0 text-sm text-muted underline hover:text-ink;
+    @apply cursor-pointer border-0 bg-transparent p-0 text-sm text-muted underline decoration-line
+      underline-offset-4 hover:text-ink;
+  }
+  /* v4 can't @apply another component class, so this repeats .btn-link. */
+  .btn-link-danger {
+    @apply cursor-pointer border-0 bg-transparent p-0 text-sm text-muted underline decoration-line
+      underline-offset-4 hover:text-bad;
   }
 
-  .card {
-    @apply rounded-xl border border-line bg-surface p-4 shadow-lg shadow-black/20;
+  /* Section headings sit on a hard ink rule instead of inside a box. */
+  .section-head {
+    @apply mb-1 flex items-baseline justify-between gap-4 border-b border-ink pb-2;
   }
-  .card-head {
-    @apply mb-3 flex items-center justify-between gap-3;
-  }
-  .card-head h2 {
-    @apply text-lg font-semibold;
+  .section-head h2 {
+    @apply text-[15px] font-semibold;
   }
 
-  .eyebrow {
-    @apply mb-1 text-[0.7rem] font-semibold uppercase tracking-widest text-muted;
-  }
   .empty {
-    @apply rounded-lg border border-dashed border-line p-3.5 text-sm text-muted;
+    @apply py-6 text-sm text-muted;
   }
   .row {
-    @apply flex items-center justify-between gap-3 border-b border-line py-2.5 last:border-0 last:pb-0;
+    @apply flex items-center justify-between gap-4 border-b border-line py-3;
   }
 
-  .pill {
-    @apply inline-block rounded-full border border-line bg-surface-2 px-2 py-0.5
-      text-[0.7rem] font-semibold tracking-wide text-muted;
+  /* Media type: small coloured dot plus the name. */
+  .tag {
+    @apply inline-flex items-center gap-1.5 text-xs whitespace-nowrap text-muted;
   }
-  /* Picked with pill-{{ media_type }} in templates. Tailwind can't see a
-     class built like that, which is fine because these are plain CSS. */
-  .pill-movie { @apply border-movie/30 text-movie; }
-  .pill-tv { @apply border-tv/30 text-tv; }
-  .pill-book { @apply border-book/30 text-book; }
-  .pill-game { @apply border-game/30 text-game; }
-  .pill-accent { @apply border-accent/35 bg-accent/15 text-accent; }
+  .tag::before {
+    content: "";
+    @apply size-1.5 rounded-full;
+    background: var(--tag, var(--color-faint));
+  }
+  .tag-movie { --tag: var(--color-movie); }
+  .tag-tv { --tag: var(--color-tv); }
+  .tag-book { --tag: var(--color-book); }
+  .tag-game { --tag: var(--color-game); }
 
   .nav-link {
-    @apply rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-ink hover:no-underline;
+    @apply text-sm text-muted no-underline hover:text-ink;
   }
   .nav-link-active {
-    @apply bg-accent/15 text-accent;
+    @apply text-ink underline decoration-accent decoration-2 underline-offset-[6px];
+  }
+
+  /* The day strip. Busy time is hatched so it reads as "taken" without
+     needing a legend; planned sessions are solid accent. */
+  .strip-busy {
+    background-color: #ebe5da;
+    background-image: repeating-linear-gradient(135deg, #d9d1c3 0 1px, transparent 1px 6px);
+  }
+  .strip-planned {
+    @apply bg-accent text-white;
+  }
+  .strip-pending {
+    @apply border border-dashed border-accent bg-accent/8 text-accent;
   }
 }

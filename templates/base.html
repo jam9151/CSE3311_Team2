@@ -5,57 +5,51 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{% block title %}MediaFlow{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Hanken+Grotesk:wght@400;500;600;700&family=Instrument+Serif:ital@0;1&display=swap">
   <link rel="stylesheet" href="{% static 'css/app.css' %}">
 </head>
 <body class="flex min-h-screen flex-col">
   {% with page=request.resolver_match.url_name %}
-  <nav class="flex flex-wrap items-center gap-5 border-b border-line bg-surface px-6 py-3">
-    <a class="flex items-center gap-2 font-semibold tracking-tight text-ink hover:no-underline" href="{% url 'home' %}">
-      <span class="grid size-7 place-items-center rounded-lg bg-accent text-xs font-extrabold text-on-accent">MF</span>
-      MediaFlow
-    </a>
+  <header class="mx-auto flex w-full max-w-6xl flex-wrap items-baseline gap-x-8 gap-y-3 px-5 pt-6 pb-4">
+    <a class="font-display text-[28px] leading-none no-underline" href="{% url 'home' %}">MediaFlow</a>
 
     {% if user.is_authenticated %}
-      <div class="flex flex-wrap items-center gap-1">
+      <nav class="flex flex-wrap gap-x-5 gap-y-2">
         <a href="{% url 'dashboard' %}" class="nav-link {% if page == 'dashboard' %}nav-link-active{% endif %}">Today</a>
         <a href="{% url 'calendar' %}" class="nav-link {% if page == 'calendar' %}nav-link-active{% endif %}">Calendar</a>
         <a href="{% url 'backlog' %}" class="nav-link {% if page == 'backlog' %}nav-link-active{% endif %}">Backlog</a>
         <a href="{% url 'discover' %}" class="nav-link {% if page == 'discover' %}nav-link-active{% endif %}">Discover</a>
         <a href="{% url 'weekly_schedule' %}" class="nav-link {% if page == 'weekly_schedule' %}nav-link-active{% endif %}">My week</a>
         <a href="{% url 'reviews' %}" class="nav-link {% if page == 'reviews' %}nav-link-active{% endif %}">Reviews</a>
-      </div>
-      <form class="ml-auto flex items-center gap-3" action="{% url 'logout' %}" method="post">
+      </nav>
+      <form class="ml-auto flex items-baseline gap-3" action="{% url 'logout' %}" method="post">
         {% csrf_token %}
         <span class="text-sm text-muted">{{ user.username }}</span>
         <button class="btn-link">Sign out</button>
       </form>
     {% else %}
-      <div class="ml-auto flex items-center gap-2">
+      <div class="ml-auto flex items-baseline gap-5">
         <a class="nav-link" href="{% url 'login' %}">Sign in</a>
         <a class="btn btn-sm" href="{% url 'register' %}">Create account</a>
       </div>
     {% endif %}
-  </nav>
+  </header>
   {% endwith %}
 
-  <main class="mx-auto w-full max-w-6xl flex-1 px-5 pt-7 pb-12">
-    {% if messages %}
-      <div class="mb-5 grid gap-2">
-        {% for message in messages %}
-          <div class="rounded-lg border px-3.5 py-2.5 text-sm
-            {% if message.tags == 'success' %}border-good/30 bg-good/10
-            {% elif message.tags == 'error' %}border-bad/30 bg-bad/10
-            {% else %}border-accent/30 bg-accent/10{% endif %}">
-            {{ message }}
-          </div>
-        {% endfor %}
-      </div>
-    {% endif %}
+  <main class="mx-auto w-full max-w-6xl flex-1 px-5 pt-8 pb-16">
+    {% for message in messages %}
+      <p class="mb-6 border-l-2 py-1 pl-3 text-sm
+        {% if message.tags == 'success' %}border-good{% elif message.tags == 'error' %}border-bad{% else %}border-accent{% endif %}">
+        {{ message }}
+      </p>
+    {% endfor %}
     {% block content %}{% endblock %}
   </main>
 
-  <footer class="border-t border-line px-6 py-4 text-sm text-muted">
-    MediaFlow &middot; CSE 3311 Team 2 prototype
+  <footer class="mx-auto w-full max-w-6xl border-t border-line px-5 py-5 text-xs text-faint">
+    CSE 3311 &middot; Team 2 &middot; prototype
   </footer>
 </body>
 </html>

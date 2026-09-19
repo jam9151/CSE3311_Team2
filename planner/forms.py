@@ -1,6 +1,6 @@
 from django import forms
 from django.contrib.auth import get_user_model
-from django.contrib.auth.forms import UserCreationForm
+from django.contrib.auth.forms import AuthenticationForm, UserCreationForm
 
 from .models import BacklogItem, Commitment, Profile, RecurringBlock, Review
 
@@ -9,7 +9,19 @@ from .models import BacklogItem, Commitment, Profile, RecurringBlock, Review
 UTA_EMAIL_DOMAIN = "mavs.uta.edu"
 
 
-class RegisterForm(UserCreationForm):
+class NoColonMixin:
+    """Django puts "Label:" on every field by default. We'd rather not."""
+
+    def __init__(self, *args, **kwargs):
+        kwargs.setdefault("label_suffix", "")
+        super().__init__(*args, **kwargs)
+
+
+class LoginForm(NoColonMixin, AuthenticationForm):
+    pass
+
+
+class RegisterForm(NoColonMixin, UserCreationForm):
     email = forms.EmailField(
         required=True,
         label="UTA email",
@@ -40,7 +52,7 @@ class RegisterForm(UserCreationForm):
         return user
 
 
-class ProfileForm(forms.ModelForm):
+class ProfileForm(NoColonMixin, forms.ModelForm):
     """Waking hours. These bound the window free time is searched in."""
 
     class Meta:
@@ -60,7 +72,7 @@ class ProfileForm(forms.ModelForm):
         return cleaned
 
 
-class BacklogItemForm(forms.ModelForm):
+class BacklogItemForm(NoColonMixin, forms.ModelForm):
     class Meta:
         model = BacklogItem
         fields = ["title", "media_type", "priority", "estimated_minutes", "minutes_completed", "status", "notes"]
@@ -79,7 +91,7 @@ class BacklogItemForm(forms.ModelForm):
         return cleaned
 
 
-class RecurringBlockForm(forms.ModelForm):
+class RecurringBlockForm(NoColonMixin, forms.ModelForm):
     class Meta:
         model = RecurringBlock
         fields = ["label", "kind", "weekday", "start_time", "end_time"]
@@ -98,7 +110,7 @@ class RecurringBlockForm(forms.ModelForm):
         return cleaned
 
 
-class CommitmentForm(forms.ModelForm):
+class CommitmentForm(NoColonMixin, forms.ModelForm):
     class Meta:
         model = Commitment
         fields = ["title", "starts_at", "ends_at"]
@@ -123,7 +135,7 @@ class CommitmentForm(forms.ModelForm):
         return cleaned
 
 
-class ReviewForm(forms.ModelForm):
+class ReviewForm(NoColonMixin, forms.ModelForm):
     class Meta:
         model = Review
         fields = ["rating", "body"]
@@ -134,7 +146,7 @@ class ReviewForm(forms.ModelForm):
         }
 
 
-class CatalogSearchForm(forms.Form):
+class CatalogSearchForm(NoColonMixin, forms.Form):
     """Discover page filters. Not a ModelForm -- nothing here gets saved."""
 
     SORT_CHOICES = [
