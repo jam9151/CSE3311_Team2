@@ -1,39 +1,42 @@
-# MediaFlow — Specification and Design
+# MediaFlow: specification and design
 
-CSE 3311 Team 2 · Iteration 1 prototype
+Team 2, CSE 3311. Iteration 1.
 
-This document describes the system as built. Every input, output, data
-structure, use case and screen transition below is taken from the code in this
-repository, not from the original proposal, so it reflects what actually runs.
+This describes the prototype we actually built. Where the inception deck and
+the code disagree we wrote down what the code does, since that's what runs.
+Section 6.3 lists the things we left out.
 
-- [1. System overview](#1-system-overview)
-- [2. Inputs and outputs](#2-inputs-and-outputs)
-- [3. Data structures](#3-data-structures)
-- [4. Use cases](#4-use-cases)
-- [5. Screen transition graphs](#5-screen-transition-graphs)
-- [6. Consistency and traceability](#6-consistency-and-traceability)
+Contents:
+
+1. Overview
+2. Inputs and outputs
+3. Data structures
+4. Use cases
+5. Screen transitions
+6. Consistency and traceability
 
 ---
 
-## 1. System overview
+## 1. Overview
 
-MediaFlow is a Django web application that holds a student's films, TV, books
-and games in one backlog, works out when they are free, and proposes something
-from the backlog that fits the free time available.
+MediaFlow holds a student's films, TV, books and games in one backlog, works
+out when they're free, and suggests something from the backlog that fits the
+time they have.
 
-**Actors**
+Actors:
 
-| Actor | Description |
+| Actor | What they can do |
 | --- | --- |
-| Visitor | Not signed in. Can see the landing page, register, or sign in. |
-| Student | A signed-in user with a `@mavs.uta.edu` address. The main actor. |
-| Administrator | Django admin user. Maintains the shared catalog. |
-| System clock | Supplies the current date and time. A real input: free time is computed against it. |
+| Visitor | Not signed in. Landing page, register, sign in. |
+| Student | Signed in with a `@mavs.uta.edu` address. Does almost everything below. |
+| Administrator | Django admin. Maintains the shared catalog. |
+| System clock | Supplies the current date and time. We count it as an actor because free time is measured against it. |
 
-**Architecture.** Server-rendered Django. Requests enter through
-`planner/urls.py`, are handled in `planner/views.py`, and all scheduling logic
-lives in `planner/services.py` so it can be tested without HTTP. There is no
-JavaScript framework and no client-side state.
+It's a server-rendered Django app. Requests come in through
+`planner/urls.py` and are handled in `planner/views.py`. All the scheduling
+logic sits in `planner/services.py` instead of in the views, so we can test it
+without going through HTTP. There's no JavaScript framework and nothing is
+kept on the client.
 
 ```mermaid
 flowchart LR
@@ -52,114 +55,120 @@ flowchart LR
 
 ## 2. Inputs and outputs
 
-### 2.1 Inputs that apply to every authenticated request
+### 2.1 What every signed-in request carries
 
-| Input | Source | Purpose |
+These four are easy to forget, so we're listing them once rather than
+repeating them on every screen.
+
+| Input | Comes from | What it's for |
 | --- | --- | --- |
-| Session cookie | Browser | Identifies the signed-in user. Missing or invalid means a redirect to sign-in. |
-| CSRF token | Hidden field on every POST form | Rejects cross-site posts. Missing means HTTP 403. |
-| Current date/time | Server clock | Bounds "today", hides gaps that have already passed, and timestamps responses. |
-| `next` (hidden field) | Suggestion and priority forms | Where to return after the action. Defaults to the dashboard. |
+| Session cookie | Browser | Says who's signed in. Missing or bad means a redirect to the sign-in page. |
+| CSRF token | Hidden field on every POST form | Blocks cross-site posts. Missing means a 403. |
+| Current date and time | Server clock | Decides what "today" means, hides gaps that have already gone by, timestamps writes. |
+| `next` | Hidden field on the suggestion and priority forms | Which screen to go back to. Falls back to the dashboard. |
 
-### 2.2 Screen-by-screen inputs
+### 2.2 Screen by screen
 
-**Register** — `POST /register/`
+**Register**, `POST /register/`
 
-| Field | Type | Required | Validation |
+| Field | Type | Required | Rules |
 | --- | --- | --- | --- |
-| `username` | text | yes | Django default; must be unique |
-| `email` | email | yes | Must end in `@mavs.uta.edu`; must not already be in use |
-| `password1` / `password2` | password | yes | Must match; Django's validators |
+| `username` | text | yes | Django's default rules, must be unique |
+| `email` | email | yes | Has to end in `@mavs.uta.edu`, and can't already be in use |
+| `password1`, `password2` | password | yes | Must match, and pass Django's validators |
 
-**Sign in** — `POST /accounts/login/`: `username`, `password`.
+**Sign in**, `POST /accounts/login/`: `username` and `password`.
 
-**Waking hours** — `POST /schedule/` with `save_profile`
+**Waking hours**, `POST /schedule/` with `save_profile`
 
-| Field | Type | Required | Validation |
+| Field | Type | Required | Rules |
 | --- | --- | --- | --- |
-| `day_start` | time | yes | — |
-| `day_end` | time | yes | Must be later than `day_start` |
+| `day_start` | time | yes | |
+| `day_end` | time | yes | Has to be after `day_start` |
 
-**Recurring block** — `POST /schedule/` with `add_block`
+**Recurring block**, `POST /schedule/` with `add_block`
 
-| Field | Type | Required | Validation |
+| Field | Type | Required | Rules |
 | --- | --- | --- | --- |
-| `label` | text, ≤120 | yes | — |
-| `kind` | choice: class / work / study / other | yes | Must be a listed choice |
-| `weekday` | choice: 0–6, Monday=0 | yes | Must be a listed choice |
-| `start_time` | time | yes | — |
-| `end_time` | time | yes | Must be later than `start_time` |
+| `label` | text, up to 120 | yes | |
+| `kind` | class, work, study or other | yes | Has to be one of the listed choices |
+| `weekday` | 0 to 6, Monday is 0 | yes | Has to be one of the listed choices |
+| `start_time` | time | yes | |
+| `end_time` | time | yes | Has to be after `start_time` |
 
-**One-off commitment** — `POST /schedule/commitment/new/`
+**One-off commitment**, `POST /schedule/commitment/new/`
 
-| Field | Type | Required | Validation |
+| Field | Type | Required | Rules |
 | --- | --- | --- | --- |
-| `title` | text, ≤200 | yes | — |
+| `title` | text, up to 200 | yes | |
 | `starts_at` | datetime-local | yes | Parsed as `%Y-%m-%dT%H:%M` |
-| `ends_at` | datetime-local | yes | Must be later than `starts_at` |
+| `ends_at` | datetime-local | yes | Has to be after `starts_at` |
 
-**Catalog search** — `GET /discover/`. All optional; omitted filters are not applied.
+**Catalog search**, `GET /discover/`. Everything is optional and anything left
+blank just isn't applied.
 
-| Field | Type | Validation |
+| Field | Type | Rules |
 | --- | --- | --- |
-| `q` | text | Matched against title, creator and description |
-| `media_type` | choice: movie / tv / book / game | Must be a listed choice |
-| `genre` | choice, built from genres present in the catalog | Must be a listed choice |
-| `max_minutes` | integer | Minimum 1 |
-| `sort` | choice: title / -rating / -release_date / typical_minutes | Defaults to title |
+| `q` | text | Searched against title, creator and description |
+| `media_type` | movie, tv, book or game | One of the listed choices |
+| `genre` | built from whatever genres are in the catalog | One of the listed choices |
+| `max_minutes` | integer | At least 1 |
+| `sort` | title, -rating, -release_date, typical_minutes | Defaults to title |
 
-**Backlog item, added or edited by hand** — `POST /backlog/new/`, `POST /backlog/<pk>/edit/`
+**Backlog item entered by hand**, `POST /backlog/new/` and
+`POST /backlog/<pk>/edit/`
 
-| Field | Type | Required | Validation |
+| Field | Type | Required | Rules |
 | --- | --- | --- | --- |
-| `title` | text, ≤200 | yes | — |
-| `media_type` | choice of the four types | yes | Must be a listed choice |
-| `priority` | integer | yes | 1–5 |
-| `estimated_minutes` | integer | yes | ≥ 0 |
-| `minutes_completed` | integer | yes | ≥ 0 and ≤ `estimated_minutes` |
-| `status` | choice: backlog / in_progress / completed / paused | yes | Must be a listed choice |
-| `notes` | long text | no | — |
+| `title` | text, up to 200 | yes | |
+| `media_type` | one of the four types | yes | One of the listed choices |
+| `priority` | integer | yes | 1 to 5 |
+| `estimated_minutes` | integer | yes | 0 or more |
+| `minutes_completed` | integer | yes | 0 or more, and not more than `estimated_minutes` |
+| `status` | backlog, in_progress, completed, paused | yes | One of the listed choices |
+| `notes` | long text | no | |
 
-**Review** — `POST /reviews/<pk>/write/`: `rating` (integer 1–5, required), `body` (long text, optional).
+**Review**, `POST /reviews/<pk>/write/`: `rating`, an integer 1 to 5 and
+required, plus an optional `body`.
 
-**Other inputs**
+Everything else:
 
 | Input | Where | Notes |
 | --- | --- | --- |
-| `priority` | `POST /backlog/<pk>/priority/` | Clamped to 1–5; a non-numeric value leaves the priority unchanged |
-| `date` | `POST /suggestions/refresh/`, `GET /calendar/?date=` | `YYYY-MM-DD`; anything unparseable falls back to today |
-| `year`, `month` | `GET /calendar/` | Which month to draw; invalid values fall back to the selected day's month |
-| `status` | `GET /backlog/?status=` | Filters the list; an unrecognised value is ignored |
-| `action` | `POST /suggestions/<pk>/<action>/` | `accept`, `reject` or `done`; anything else is HTTP 404 |
-| `--demo` | `python manage.py seed_catalog --demo` | Also creates the demo student account |
+| `priority` | `POST /backlog/<pk>/priority/` | Clamped to 1 to 5. Something that isn't a number leaves it alone. |
+| `date` | `POST /suggestions/refresh/` and `GET /calendar/?date=` | `YYYY-MM-DD`. Anything we can't parse falls back to today. |
+| `year`, `month` | `GET /calendar/` | Which month to draw. Bad values fall back to the month of the selected day. |
+| `status` | `GET /backlog/?status=` | Filters the list. Unrecognised values are ignored. |
+| `action` | `POST /suggestions/<pk>/<action>/` | `accept`, `reject` or `done`. Anything else is a 404. |
+| `--demo` | `python manage.py seed_catalog --demo` | Also builds the demo student account. |
 
 ### 2.3 Outputs
 
-| Output | Produced by | Detail |
+| Output | From | Detail |
 | --- | --- | --- |
-| Rendered HTML page | Every GET | The nine screens in §5 |
-| Redirect after POST | Every successful write | Post/Redirect/Get, so a refresh never repeats a write |
-| Flash message | Writes and failed suggestion runs | Success, or an explanation of why nothing was suggested |
-| Field errors | Any invalid form | Re-renders the form with the submitted values and messages |
-| Derived free intervals | `free_intervals()` | Start, end and length of each usable gap |
-| Suggestions | `suggest_for_day()` | Up to 3 `Suggestion` rows, each with a human-readable reason |
-| Persisted records | All writes | See §3 |
-| HTTP 404 | Unknown slug/pk, another user's row, unknown action | Ownership is enforced by filtering on `user` |
-| HTTP 302 to sign-in | Any `@login_required` view while signed out | With `?next=` so the user lands where they meant to |
-| HTTP 405 | GET on a POST-only action | `@require_POST` |
+| HTML page | Every GET | The nine screens in section 5 |
+| Redirect after a POST | Every successful write | So refreshing never repeats the write |
+| Flash message | Writes, and suggestion runs that come back empty | Either a confirmation or an explanation |
+| Field errors | Any invalid form | Form comes back with what was typed, plus the messages |
+| Free intervals | `free_intervals()` | Start, end and length of each usable gap |
+| Suggestions | `suggest_for_day()` | Up to 3 `Suggestion` rows, each with a reason written out |
+| Database rows | All writes | See section 3 |
+| 404 | Unknown slug or pk, someone else's row, unknown action | Ownership is enforced by filtering on `user` |
+| 302 to sign-in | Any `@login_required` view while signed out | Carries `?next=` so you land where you meant to |
+| 405 | GET on an action that only takes POST | From `@require_POST` |
 
-**Generated text.** Suggestion reasons are built from the item and the gap, so
-the output explains itself. One of:
+The suggestion reasons are generated from the item and the gap, so the output
+explains itself. There are three shapes:
 
-- *"You have 3h free and its 2h 35m runtime fits in one sitting."* (film)
-- *"2h free is just enough to finish it."* (last sitting)
-- *"2h free, so a chapter of this is a comfortable fit."* (chunked)
+- "You have 3h free and its 2h 35m runtime fits in one sitting." for a film
+- "2h free is just enough to finish it." when it's the last sitting
+- "2h free, so a chapter of this is a comfortable fit." for anything chunked
 
 ---
 
 ## 3. Data structures
 
-### 3.1 Stored entities
+### 3.1 What we store
 
 ```mermaid
 erDiagram
@@ -174,285 +183,353 @@ erDiagram
   BACKLOGITEM ||--o| REVIEW : "reviewed by"
 ```
 
-**Profile** — waking hours, which bound the window free time is searched in.
+`Profile` holds waking hours, which bound the window we search for free time
+in. One-to-one with the user, created when they register. `day_start` and
+`day_end` default to 08:00 and 23:00.
 
-| Field | Type | Notes |
-| --- | --- | --- |
-| `user` | one-to-one | Created at registration |
-| `day_start`, `day_end` | time | Default 08:00 and 23:00 |
-
-**CatalogItem** — the shared, app-wide catalog that everyone searches.
+`CatalogItem` is the shared catalog everyone searches.
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `title` | char(200) | |
-| `slug` | slug, unique | Built from title + type, so *Dune* the film and *Dune* the novel can coexist |
-| `media_type` | choice | movie / tv / book / game |
-| `genre`, `creator` | char | Optional; genre drives the Discover filter |
+| `slug` | slug, unique | Built from title plus type, so Dune the film and Dune the novel can both exist |
+| `media_type` | choice | movie, tv, book, game |
+| `genre`, `creator` | char | Optional. Genre feeds the Discover filter. |
 | `description` | text | |
 | `release_date` | date, nullable | |
-| `rating` | decimal(3,1), nullable | 0–10 |
-| `typical_minutes` | positive int | **The field the scheduler depends on** |
+| `rating` | decimal(3,1), nullable | Out of 10 |
+| `typical_minutes` | positive int | The field the scheduler runs on |
 
-**BacklogItem** — one entry on a student's personal backlog.
+`BacklogItem` is one entry on a student's own backlog.
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `user` | FK | Owner |
-| `catalog_item` | FK, nullable | Null for hand-typed items |
-| `title`, `media_type` | copied from catalog | Kept on the row so the item survives a catalog deletion |
-| `priority` | small int | 1–5, 5 first |
-| `estimated_minutes`, `minutes_completed` | positive int | Difference drives `remaining_minutes` |
-| `status` | choice | backlog / in_progress / completed / paused |
+| `catalog_item` | FK, nullable | Null when the item was typed in by hand |
+| `title`, `media_type` | copied off the catalog row | Kept here so the entry survives the catalog row going away |
+| `priority` | small int | 1 to 5, 5 goes first |
+| `estimated_minutes`, `minutes_completed` | positive int | The difference is `remaining_minutes` |
+| `status` | choice | backlog, in_progress, completed, paused |
 | `notes` | text | |
 | `added_at`, `completed_at` | datetime | |
 
-Ordering is `-priority, added_at`. A unique constraint on
-`(user, catalog_item)` prevents adding the same catalog title twice; it is
-conditional on `catalog_item` being non-null so hand-typed items are exempt.
+Ordered by `-priority, added_at`. There's a unique constraint on
+`(user, catalog_item)` so the same catalog title can't be added twice. It's
+conditional on `catalog_item` not being null, otherwise every hand-typed item
+after the first would collide.
 
-**RecurringBlock** — something that happens every week.
+`RecurringBlock` is something that happens every week.
 
 | Field | Type | Notes |
 | --- | --- | --- |
-| `label` | char(120) | "CSE 3311 lecture" |
-| `kind` | choice | class / work / study / other |
-| `weekday` | small int | Monday=0, matching Python's `weekday()` |
-| `start_time`, `end_time` | time | End must be after start |
+| `label` | char(120) | e.g. "CSE 3311 lecture" |
+| `kind` | choice | class, work, study, other |
+| `weekday` | small int | Monday is 0, same as Python's `weekday()` |
+| `start_time`, `end_time` | time | End has to be after start |
 
-**Commitment** — a one-off dated obligation. `title`, `starts_at`, `ends_at`.
+`Commitment` is a one-off dated obligation: `title`, `starts_at`, `ends_at`.
 
-**Suggestion** — one proposal: this item, in this gap, on this day.
+`Suggestion` is one proposal, meaning this item, in this gap, on this day.
 
 | Field | Type | Notes |
 | --- | --- | --- |
 | `user`, `backlog_item` | FK | |
 | `date` | date | |
-| `start_time`, `end_time`, `minutes` | time / int | The proposed sitting |
+| `start_time`, `end_time`, `minutes` | time, time, int | The sitting we're proposing |
 | `reason` | char(240) | The generated explanation |
-| `status` | choice | pending / accepted / rejected / done |
+| `status` | choice | pending, accepted, rejected, done |
 | `created_at`, `responded_at` | datetime | |
 
-Rejected rows are **kept on purpose**: the scorer reads them back so a
-declined title stops being pushed.
+We keep the rejected rows rather than deleting them, because the scorer reads
+them back to stop pushing something the user already turned down.
 
-**Review** — one-to-one with a backlog item. `rating` 1–5, optional `body`.
+`Review` is one-to-one with a backlog item: `rating` 1 to 5, and an optional
+`body`.
 
-### 3.2 In-memory structures
+### 3.2 Structures we build at runtime
 
-| Structure | Where | Shape and purpose |
+| Structure | Where | Shape and what it's for |
 | --- | --- | --- |
-| `SESSION_RULES` | `models.py` | `{media_type: {chunkable, chunk_minutes, max_minutes, unit}}`. The table that makes a film behave differently from a book. |
-| `Interval` | `services.py` | Frozen dataclass `(start, end)` with `minutes` and `label`. One free gap. |
-| `BusyBlock` | `services.py` | Frozen dataclass `(start, end, label, source)` where source is recurring / commitment / planned. Normalises three different row types into one shape so the sweep can treat them alike. |
-| `day_plan()` result | `services.py` | `{date, busy[], free[], planned[], pending[]}`. Everything one day's screen needs, in one call. |
-| `month_grid()` result | `services.py` | List of weeks, each 7 cells of `{date, in_month, is_today, planned[]}`. Built from a single query rather than one per cell. |
+| `SESSION_RULES` | `models.py` | `{media_type: {chunkable, chunk_minutes, max_minutes, unit}}`. This is what makes a film behave differently from a book. |
+| `Interval` | `services.py` | Frozen dataclass of `(start, end)` with `minutes` and `label`. One free gap. |
+| `BusyBlock` | `services.py` | Frozen dataclass of `(start, end, label, source)`, source being recurring, commitment or planned. Flattens three different row types into one shape so the sweep can treat them the same. |
+| `day_plan()` result | `services.py` | `{date, busy[], free[], planned[], pending[]}`. Everything one day's screen needs in a single call. |
+| `month_grid()` result | `services.py` | A list of weeks, each 7 cells of `{date, in_month, is_today, planned[]}`. Built off one query instead of one per cell. |
 | Rejection counts | `services.py` | `{backlog_item_id: count}` over the last 14 days. |
 
-### 3.3 Why these structures suit the features
+### 3.3 Why we modelled it this way
 
-- **Duration is a first-class field** on both `CatalogItem` and `BacklogItem`.
-  The whole product claim is "what fits the time you have", which is only
-  answerable if every item carries a number of minutes.
-- **`SESSION_RULES` is a table, not conditionals.** Adding a media type means
-  adding one row, not editing the scheduler.
-- **Busy is stored; free is derived.** Students know their classes, not their
-  gaps. Free time is computed on demand, so it is never stale after an edit.
-- **`BusyBlock` unifies three sources**, which is what lets one sweep handle
-  recurring blocks, dated commitments and already-accepted plans together.
-- **Rejections are rows, not a flag**, so the penalty can decay over 14 days
-  instead of blocking a title forever.
-- **Title and type are copied onto `BacklogItem`** rather than only referenced,
-  so a user's backlog is readable even if the catalog row is removed
-  (`on_delete=SET_NULL`).
+Duration is a real field on both `CatalogItem` and `BacklogItem` rather than
+something we look up later. The whole point of the app is answering "what fits
+the time I have", and you can't answer that unless every item carries a number
+of minutes.
 
-### 3.4 Algorithms over those structures
+`SESSION_RULES` is a lookup table instead of a pile of if-statements. Adding a
+fifth media type later means adding a row, not editing the scheduler.
 
-**Free-time detection** — `free_intervals(user, day)`
+We store when the user is busy and work out when they're free, rather than the
+other way round. Students know their class times; they don't know their gaps.
+It also means free time can never be stale, because it's recalculated every
+time instead of being saved somewhere.
 
-1. Start a cursor at `day_start`; the limit is `day_end`.
-2. If the day is today, move the cursor forward to now, since a gap that has
-   passed cannot be offered.
-3. Walk `busy_blocks()` in start order. A block ending before the cursor is
-   skipped; a block starting after it yields a gap; the cursor then jumps to
-   the block's end. Overlapping blocks merge automatically because the cursor
-   only ever moves forward.
-4. Emit the tail gap. Discard anything shorter than `MIN_USABLE_MINUTES` (20).
+`BusyBlock` exists so that recurring blocks, dated commitments and
+already-accepted sessions all come out of `busy_blocks()` in the same shape.
+Without it the sweep in `free_intervals()` would need three branches.
 
-**Sitting length** — `BacklogItem.session_minutes_for(available)`
+Rejections are rows rather than a flag on the item, which lets the penalty fade
+after 14 days instead of hiding a title forever.
 
-- Not chunkable (film): return the full remaining runtime if it fits the gap,
-  otherwise **`None`** — the item is not a candidate at all.
-- Chunkable: cap at `max_minutes` (one realistic sitting), return the remainder
-  if it would finish the item, else round down to whole `chunk_minutes` units.
-  Returns `None` if not even one unit fits.
+`BacklogItem` copies the title and type off the catalog row instead of only
+pointing at it. The FK is `on_delete=SET_NULL`, so if a catalog entry is
+removed the user's backlog still reads properly.
 
-**Scoring** — `_score(item, gap, rejections)`
+### 3.4 The algorithms
+
+**Free time**, `free_intervals(user, day)`:
+
+1. Put a cursor at `day_start`. The limit is `day_end`.
+2. If the day is today, move the cursor up to the current time, since there's
+   no point offering a gap that's already gone.
+3. Walk `busy_blocks()` in start order. Skip any block that ends before the
+   cursor. If a block starts after the cursor, the space between is a gap.
+   Either way the cursor jumps to the end of the block. Overlapping blocks sort
+   themselves out here, because the cursor only ever moves forward.
+4. Whatever is left at the end is the last gap. Throw away anything shorter
+   than `MIN_USABLE_MINUTES`, which is 20.
+
+**How long a sitting**, `BacklogItem.session_minutes_for(available)`:
+
+For something not chunkable, meaning a film, return the full remaining runtime
+if it fits the gap and `None` if it doesn't. `None` means it isn't a candidate
+at all. For everything else, cap at `max_minutes` for one sitting, return the
+remainder if that would finish the item, and otherwise round down to whole
+`chunk_minutes` units. If not even one unit fits, that's `None` too.
+
+**Scoring**, `_score(item, gap, rejections)`:
 
 | Term | Weight |
 | --- | --- |
-| Priority | `priority × 20` |
-| Already in progress | `+25` |
-| Share of the gap used | `+ (minutes / gap) × 30` |
-| Item is a film that fits | `+15` |
-| Sitting would finish the item | `+20` |
-| Each rejection in the last 14 days | `−35` |
+| Priority | `priority x 20` |
+| Already started | `+25` |
+| How much of the gap gets used | `+ (minutes / gap) x 30` |
+| It's a film and it fits | `+15` |
+| The sitting would finish it | `+20` |
+| Each rejection in the last 14 days | `-35` |
 
-`suggest_for_day()` takes the largest gaps first, picks the highest scorer for
-each, never repeats an item within a day, and stops at three.
+`suggest_for_day()` takes the biggest gaps first, picks the highest scorer for
+each one, won't repeat an item within the same day, and stops after three.
 
 ---
 
 ## 4. Use cases
 
-Each use case lists its exception flows. "Signed in" as a precondition implies
-the exception *"not signed in → HTTP 302 to `/accounts/login/?next=<url>`"*,
-which applies to every use case below except UC-1 and UC-2 and is not repeated.
+Every use case below except UC-1 and UC-2 needs the user signed in, so
+"not signed in means a 302 to `/accounts/login/?next=<url>`" applies to all of
+them and we haven't repeated it each time.
 
 ### UC-1 Register
 
-- **Actor** Visitor · **Goal** Get an account
-- **Main flow** Open `/register/` → enter username, UTA email, password twice →
-  submit → account and profile created, signed in → redirected to **My week**
-  with "Start by telling us when you are busy".
-- **Why My week, not the dashboard:** with no commitments recorded there is no
-  free time to plan around, so the dashboard would look broken.
-- **Exceptions**
-  - E1 Email not `@mavs.uta.edu` → form redisplays: "MediaFlow is open to UTA students…"
-  - E2 Email already used → "An account already uses that email."
-  - E3 Passwords differ or fail Django's validators → field errors
-  - E4 Username taken → field error
+Actor: visitor. Goal: get an account.
 
-### UC-2 Sign in / sign out
+Main flow: open `/register/`, enter a username, UTA email and password twice,
+submit. The account and profile are created, they're signed in, and they land
+on My week with "Start by telling us when you are busy".
 
-- **Main flow** `/accounts/login/` → credentials → dashboard.
-- **Exceptions** E1 Wrong credentials → form redisplays with an error.
-  E2 Visiting a protected page while signed out → redirect to sign-in carrying
-  `?next=`, then on to the original page after signing in.
-- **Sign out** POST from the nav on any page → landing page.
+We send them to My week rather than the dashboard on purpose. A brand new
+account has no commitments recorded, so the dashboard would show the whole day
+as free and no suggestions, which looks broken.
+
+Exceptions:
+
+- E1 Email isn't `@mavs.uta.edu`. Form comes back with "MediaFlow is open to UTA students..."
+- E2 Email already used. "An account already uses that email."
+- E3 Passwords don't match, or fail Django's validators. Field errors.
+- E4 Username taken. Field error.
+
+### UC-2 Sign in and sign out
+
+Main flow: `/accounts/login/`, enter credentials, land on the dashboard.
+
+Exceptions:
+
+- E1 Wrong credentials. Form comes back with an error.
+- E2 Hitting a protected page while signed out. Redirected to sign-in with
+  `?next=`, then forwarded to the page they originally wanted.
+
+Signing out is a POST from the nav on any page, and goes to the landing page.
 
 ### UC-3 Record the weekly schedule
 
-- **Goal** Tell the system when the student is busy
-- **Main flow** **My week** → fill "Add a recurring block" → submit → block
-  saved → page reloads showing it grouped by weekday, and the seven-day free
-  time figures update.
-- **Exceptions** E1 `end_time` ≤ `start_time` → "End time must be after start time."
-  E2 Missing required field → field errors. E3 Overlapping blocks are accepted
-  deliberately and merge when free time is computed.
+Goal: tell the app when the student is busy.
+
+Main flow: on My week, fill in "Add a recurring block" and submit. The block is
+saved, the page comes back with it listed under its weekday, and the free time
+figures for the next seven days update.
+
+Exceptions:
+
+- E1 `end_time` is not after `start_time`. "End time must be after start time."
+- E2 Missing a required field. Field errors.
+- E3 Overlapping blocks are allowed. We don't reject them; they merge when free
+  time is calculated.
 
 ### UC-4 Set waking hours
 
-- **Main flow** **My week** → "Waking hours" → save → free time is recomputed
-  within the new window.
-- **Exceptions** E1 Bedtime ≤ wake-up → "Your bedtime needs to be after your wake-up time."
+Main flow: My week, the "Waking hours" form, save. Free time is recalculated
+inside the new window.
+
+Exception: E1 bedtime isn't after the wake-up time, so "Your bedtime needs to
+be after your wake-up time."
 
 ### UC-5 Add a one-off commitment
 
-- **Main flow** **My week** → "+ One-off commitment" → title and start/end →
-  save → returns to My week; that date's free time drops.
-- **Exceptions** E1 End ≤ start → validation error. E2 Cancel → returns with
-  nothing saved. E3 A commitment crossing midnight is clipped to each day it
-  touches.
+Main flow: My week, "+ One-off commitment", enter a title and a start and end,
+save. Back to My week, and free time on that date drops.
+
+Exceptions:
+
+- E1 End isn't after start. Validation error.
+- E2 Cancel. Nothing saved.
+- E3 A commitment running past midnight gets clipped to each day it covers.
 
 ### UC-6 Search the catalog
 
-- **Main flow** **Discover** → any combination of text, type, genre, max
-  minutes, sort → results list with a count.
-- **Exceptions** E1 No matches → "Nothing matched those filters."
-  E2 No filters → whole catalog, capped at 60 rows.
-  E3 `max_minutes` below 1 → field error.
+Main flow: Discover, then any mix of search text, type, genre, max minutes and
+sort order. Results come back with a count.
+
+Exceptions:
+
+- E1 Nothing matches. "Nothing matched those filters."
+- E2 No filters at all. Whole catalog, capped at 60 rows.
+- E3 `max_minutes` below 1. Field error.
 
 ### UC-7 View media details
 
-- **Main flow** Click a result → detail page with description, creator, release
-  date, rating, typical duration, and whether it **fits today** against the
-  longest current gap.
-- **Exceptions** E1 Unknown slug → HTTP 404. E2 No free time today → "No free
-  time" instead of yes/no. E3 Already on the backlog → shows Edit/Remove rather
-  than Add.
+Main flow: click a result to get the detail page, with the description,
+creator, release date, rating, how long it usually takes, and whether it fits
+today measured against the longest gap the user currently has.
+
+Exceptions:
+
+- E1 Unknown slug. 404.
+- E2 No free time today at all. Shows "No free time" instead of yes or no.
+- E3 Already on the backlog. Shows Edit and Remove instead of Add.
 
 ### UC-8 Add something to the backlog
 
-- **Main flow** Press **Add** on Discover or the detail page → a backlog item is
-  created from the catalog row, carrying its duration → confirmation, and the
-  button becomes "On your backlog".
-- **Exceptions** E1 Already present → "… is already on your backlog", nothing
-  duplicated (unique constraint). E2 Item not in the catalog → **Add manually**
-  and enter title, type, duration by hand.
+Main flow: press Add from either Discover or the detail page. A backlog item is
+created from the catalog row and carries its duration across. Confirmation
+message, and the button turns into "On your backlog".
+
+Exceptions:
+
+- E1 Already there. "... is already on your backlog" and nothing is duplicated,
+  which the unique constraint guarantees.
+- E2 Not in the catalog at all. Use Add manually and type in the title, type
+  and duration.
 
 ### UC-9 Maintain the backlog
 
-- **Main flow** **Backlog** → change priority from the inline dropdown (saves
-  immediately), edit an item, filter by status, or remove an item.
-- **Exceptions** E1 `minutes_completed` > `estimated_minutes` → validation error.
-  E2 Priority outside 1–5 → clamped. E3 Non-numeric priority → unchanged.
-  E4 Another user's item → HTTP 404. E5 Setting status to *completed* by hand
-  backfills `completed_at` and marks the time complete.
+Main flow: the Backlog screen. Change priority from the inline dropdown, which
+saves straight away, or edit an item, filter by status, or remove something.
+
+Exceptions:
+
+- E1 `minutes_completed` higher than `estimated_minutes`. Validation error.
+- E2 Priority outside 1 to 5. Clamped.
+- E3 Priority that isn't a number. Left unchanged.
+- E4 Someone else's item. 404.
+- E5 Setting status to completed by hand fills in `completed_at` and marks the
+  time as done.
 
 ### UC-10 Get a suggestion
 
-- **Actor** Student · **Goal** Be told what to start
-- **Preconditions** At least one unfinished backlog item and one usable gap
-- **Main flow** **Dashboard** → "Suggest something" → pending suggestions for
-  today are cleared → free gaps are computed → the best-scoring item for each of
-  the largest gaps is proposed, at most three, no item twice → each is shown
-  with its time, length and reason.
-- **Exceptions**
-  - E1 Backlog empty → "Add something to your backlog first…"
-  - E2 No usable free time → "No usable free time left that day."
-  - E3 Backlog non-empty but nothing fits → "Nothing in your backlog fits the gaps you have left that day."
-  - E4 Every gap under 20 minutes → treated as E2
-  - E5 Only films left and none fit the gap → E3
-  - E6 GET instead of POST → HTTP 405
+Actor: student. Goal: be told what to start. Needs at least one unfinished
+backlog item and one usable gap.
+
+Main flow: dashboard, "Suggest something". Any pending suggestions for today
+are cleared out first, free gaps are calculated, and the best-scoring item for
+each of the biggest gaps is proposed. At most three, and never the same item
+twice. Each one shows its time, its length and its reason.
+
+Exceptions:
+
+- E1 Backlog is empty. "Add something to your backlog first..."
+- E2 No usable free time. "No usable free time left that day."
+- E3 Backlog has things in it but nothing fits. "Nothing in your backlog fits
+  the gaps you have left that day."
+- E4 Every gap is under 20 minutes. Same as E2.
+- E5 Only films left and none of them fit. Same as E3.
+- E6 GET instead of POST. 405.
+
+E1 to E3 are three different messages because the fix is different in each
+case, and "no suggestions" on its own wouldn't tell the user which one they're
+looking at.
 
 ### UC-11 Accept a suggestion
 
-- **Main flow** "Add to calendar" → status becomes *accepted*; a *backlog* item
-  becomes *in progress*; the session appears on the calendar and that time is no
-  longer free.
-- **Exceptions** E1 Another user's suggestion → HTTP 404. E2 Accepting twice is
-  harmless; the row is already accepted.
+Main flow: "Add to calendar". The suggestion goes to accepted, an item still
+sitting in backlog moves to in progress, the session shows up on the calendar,
+and that time stops counting as free.
+
+Exceptions:
+
+- E1 Someone else's suggestion. 404.
+- E2 Accepting twice does nothing, since it's already accepted.
 
 ### UC-12 Reject a suggestion
 
-- **Main flow** "Not today" → status *rejected* → "We will ease off on that one
-  for a while" → the item loses 35 points for 14 days.
-- **Exceptions** E1 All suggestions rejected → the list empties; a refresh may
-  legitimately propose the same items again, now ranked lower.
+Main flow: "Not today". Status goes to rejected, the user gets "We will ease
+off on that one for a while", and the item loses 35 points for the next 14
+days.
+
+Exception: E1 rejecting all of them empties the list. A refresh can legitimately
+suggest the same things again, just ranked lower than before.
 
 ### UC-13 Mark a session done
 
-- **Main flow** "Mark done" on a planned session → its minutes are added to the
-  item's progress.
-- **Exceptions** E1 Item now fully complete → status *completed*, `completed_at`
-  set, and the user is invited to review it. E2 Progress would exceed the
-  estimate → capped at the estimate.
+Main flow: "Mark done" on a planned session adds its minutes to the item's
+progress.
+
+Exceptions:
+
+- E1 That finishes the item. Status goes to completed, `completed_at` is set,
+  and the user is asked whether they want to review it.
+- E2 The progress would go past the estimate. Capped at the estimate.
 
 ### UC-14 Browse the calendar
 
-- **Main flow** **Calendar** → month grid, Sunday first, with planned sessions
-  in each day cell → click a day → that day's busy blocks, planned sessions and
-  free gaps, plus a button to suggest something for that day.
-- **Exceptions** E1 Unparseable `?date=` → falls back to today. E2 Invalid
-  `year`/`month` → falls back to the selected day's month. E3 Empty day → "Nothing
-  scheduled, and no free time recorded." E4 More than two sessions in a cell →
-  "+N more". E5 Paging months keeps the selected day.
+Main flow: the Calendar screen shows a month grid starting on Sunday, with
+planned sessions inside the day cells. Clicking a day shows that day's busy
+blocks, planned sessions and free gaps, plus a button to suggest something for
+that specific day.
 
-### UC-15 Review something finished
+Exceptions:
 
-- **Main flow** **Reviews** → an item under "Finished, not reviewed yet" →
-  rating 1–5 and optional text → saved and listed.
-- **Exceptions** E1 Rating outside 1–5 → field error. E2 Reviewing an item not
-  yet marked complete → completing it is implied, so the item is marked
-  completed. E3 Re-opening an existing review edits it rather than creating a
-  second one (one-to-one).
+- E1 A `?date=` we can't parse. Falls back to today.
+- E2 Bad `year` or `month`. Falls back to the month of the selected day.
+- E3 Empty day. "Nothing scheduled, and no free time recorded."
+- E4 More than two sessions in one cell. Shows "+N more".
+- E5 Paging to another month keeps whichever day was selected.
+
+### UC-15 Review something
+
+Main flow: Reviews, pick something under "Finished, not reviewed yet", give it
+1 to 5 and optionally write something, save. It appears in the list.
+
+Exceptions:
+
+- E1 Rating outside 1 to 5. Field error.
+- E2 Reviewing something not yet marked complete. Writing a review implies you
+  finished it, so we mark it completed.
+- E3 Opening a review that already exists edits it instead of making a second
+  one, since it's a one-to-one.
 
 ---
 
-## 5. Screen transition graphs
+## 5. Screen transitions
 
-### 5.1 Whole-application screen map
+### 5.1 The whole app
 
 ```mermaid
 flowchart TD
@@ -479,11 +556,11 @@ flowchart TD
   D -->|"sign out"| L
 ```
 
-Every authenticated screen carries the same nav, so any of the six main screens
-reaches any other in one click. Only the four forms are leaf screens, and each
-returns to the screen that opened it.
+Every signed-in screen carries the same nav, so any of the six main screens
+gets to any other in one click. Only the four forms are dead ends, and each one
+goes back to whichever screen opened it.
 
-### 5.2 Registration and sign-in, including exceptions
+### 5.2 Registration and signing in
 
 ```mermaid
 stateDiagram-v2
@@ -520,7 +597,7 @@ stateDiagram-v2
   CommitmentForm --> MyWeek : "cancel, nothing saved"
 ```
 
-### 5.4 Discover, media detail and adding to the backlog
+### 5.4 Discover, details, and adding to the backlog
 
 ```mermaid
 stateDiagram-v2
@@ -538,7 +615,9 @@ stateDiagram-v2
   BacklogForm --> BacklogForm : "E4 completed > estimate"
 ```
 
-### 5.5 The suggestion loop — the core feature
+### 5.5 The suggestion loop
+
+This is the main feature, so it's worth reading alongside UC-10 to UC-13.
 
 ```mermaid
 stateDiagram-v2
@@ -560,8 +639,8 @@ stateDiagram-v2
   ReviewForm --> Reviews : "saved"
 ```
 
-The three exception edges out of `Computing` are the three distinct empty
-results, each with its own message, because the fix differs in each case.
+The three edges going back to Dashboard out of Computing are the three
+different empty results from UC-10.
 
 ### 5.6 Calendar
 
@@ -581,53 +660,57 @@ stateDiagram-v2
 
 ## 6. Consistency and traceability
 
-### 6.1 Why the use cases and graphs do not conflict
+### 6.1 Why the flows don't contradict each other
 
-Four conventions hold across every screen, so no two flows can contradict:
+Four rules hold everywhere, which is what keeps the use cases and the diagrams
+in agreement:
 
-1. **Post/Redirect/Get everywhere.** Every successful write redirects; no
-   transition graph has a POST that stays put on success. A refresh never
-   repeats a write.
-2. **Failed validation always returns to the same form**, never forward. Every
-   exception edge in §5 is a self-loop on the form it came from.
-3. **`next` decides the return screen.** The suggestion actions appear on both
-   the dashboard and the calendar, and each passes its own `next`, so UC-10 to
-   UC-13 return to whichever screen invoked them. This is why §5.5 and §5.6 can
-   both contain the same accept/reject transitions without conflicting.
-4. **Ownership is uniform.** Every row is fetched filtered by `user`, so one
-   user acting on another's row is HTTP 404 everywhere. No graph shows a
-   cross-user edge.
+1. Every successful write redirects instead of rendering. No diagram has a POST
+   that stays on the same screen after succeeding, and refreshing never repeats
+   a write.
+2. Failed validation always comes back to the form it was submitted from, never
+   forward. That's why every exception in section 5 is drawn as a self-loop.
+3. The `next` field decides where an action returns to. The accept, reject and
+   done buttons appear on both the dashboard and the calendar, and each page
+   passes its own `next`. This is why 5.5 and 5.6 can both show the same
+   accept and reject transitions without conflicting.
+4. Every row is fetched filtered by `user`, so acting on someone else's data is
+   a 404 on every screen. No diagram has an edge between two users' data.
 
-One deliberate asymmetry: UC-1 ends on **My week** while UC-2 ends on the
-**dashboard**. New accounts have no schedule, so the dashboard would show a
-full day of free time and no suggestions.
+There's one deliberate asymmetry worth pointing out, since it looks like a
+contradiction otherwise: UC-1 finishes on My week while UC-2 finishes on the
+dashboard. The reason is in UC-1.
 
 ### 6.2 Traceability
 
-| Use case | Screens | Route | View | Covered by |
+| Use case | Screens | Route | View | Tests |
 | --- | --- | --- | --- | --- |
-| UC-1 Register | Register → My week | `/register/` | `register` | `RegisterTests` |
-| UC-2 Sign in | Sign in → Dashboard | `/accounts/login/` | Django auth | `test_dashboard_requires_login` |
+| UC-1 Register | Register, My week | `/register/` | `register` | `RegisterTests` |
+| UC-2 Sign in | Sign in, Dashboard | `/accounts/login/` | Django auth | `test_dashboard_requires_login` |
 | UC-3 Weekly schedule | My week | `/schedule/` | `weekly_schedule` | `FreeTimeTests` |
 | UC-4 Waking hours | My week | `/schedule/` | `weekly_schedule` | `test_waking_hours_limit_search` |
 | UC-5 Commitment | Commitment form | `/schedule/commitment/new/` | `add_commitment` | `test_dated_commitment` |
 | UC-6 Search | Discover | `/discover/` | `discover` | `test_discover_filters` |
 | UC-7 Details | Media detail | `/media/<slug>/` | `catalog_detail` | `test_pages_load` |
 | UC-8 Add to backlog | Discover, detail | `/media/<pk>/add/` | `add_from_catalog` | `test_add_from_catalog` |
-| UC-9 Maintain backlog | Backlog, form | `/backlog/…` | `backlog*` | `test_pages_load` |
-| UC-10 Suggest | Dashboard, Calendar | `/suggestions/refresh/` | `refresh_suggestions` | `SuggestionTests` (9 tests) |
+| UC-9 Maintain backlog | Backlog, form | `/backlog/...` | `backlog*` | `test_pages_load` |
+| UC-10 Suggest | Dashboard, Calendar | `/suggestions/refresh/` | `refresh_suggestions` | `SuggestionTests`, 9 tests |
 | UC-11 Accept | Dashboard, Calendar | `/suggestions/<pk>/accept/` | `respond_to_suggestion` | `test_accept_suggestion` |
 | UC-12 Reject | Dashboard, Calendar | `/suggestions/<pk>/reject/` | `respond_to_suggestion` | `test_rejection_demotes_item` |
 | UC-13 Mark done | Dashboard, Calendar | `/suggestions/<pk>/done/` | `respond_to_suggestion` | `test_mark_done_logs_progress` |
 | UC-14 Calendar | Calendar | `/calendar/` | `calendar` | `test_month_grid_sunday_first` |
-| UC-15 Review | Reviews, form | `/reviews/…` | `reviews`, `write_review` | `test_pages_load` |
-| Cross-user safety | all | all | `get_object_or_404(user=…)` | `test_cannot_touch_another_users_suggestion` |
+| UC-15 Review | Reviews, form | `/reviews/...` | `reviews`, `write_review` | `test_pages_load` |
+| Cross-user safety | all | all | `get_object_or_404(user=...)` | `test_cannot_touch_another_users_suggestion` |
 
-### 6.3 Not in this iteration
+### 6.3 What we didn't build this iteration
 
-- **Push notifications.** Needs service workers and a push service; the deck
-  listed it as a stretch item.
-- **A scraped catalog.** The catalog is seeded by `seed_catalog`. Everything
-  downstream only needs a duration, so a real source replaces one command.
-- **Email verification.** The UTA restriction is a check on the address at
-  signup; the address is not confirmed.
+Push notifications need service workers and a push service, and the inception
+deck had them down as a stretch item from the start.
+
+The catalog isn't scraped. It's seeded by `seed_catalog` with 36 titles we
+entered ourselves. Nothing downstream cares where the rows come from as long as
+they have a duration, so swapping in a real source is a change to one command.
+
+The UTA restriction is only a check on the shape of the email address at
+signup. We don't send a confirmation email, so nothing proves the address is
+real.
