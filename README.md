@@ -53,6 +53,21 @@ like `.btn`, `.card` and `.pill` are defined there too.
 If you add a Tailwind class to a template and it doesn't show up, the CSS
 probably hasn't been rebuilt yet.
 
+## Docs
+
+`docs/specification-and-design.md` is the write-up: inputs and outputs, data
+structures, use cases and screen transitions. `docs/specification-and-design.pdf`
+is the same thing built for handing in.
+
+To rebuild the PDF after editing the markdown:
+
+```powershell
+python docs/build_pdf.py
+```
+
+It needs Chrome or Edge, the `markdown` package, and internet, because the
+mermaid diagrams are drawn by a real browser.
+
 ## Where we are on the feature list
 
 | Feature | Status |
