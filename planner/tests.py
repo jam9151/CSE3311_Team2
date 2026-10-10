@@ -1,7 +1,10 @@
 import io
+import os
 import re
 import smtplib
+import tempfile
 from datetime import date, datetime, time, timedelta
+from pathlib import Path
 from unittest import mock
 
 from django.contrib.auth import get_user_model
@@ -10,6 +13,8 @@ from django.core.management import call_command
 from django.core.management.base import CommandError
 from django.test import TestCase, override_settings
 from django.utils import timezone
+
+from mediaflow.env import clean_smtp_password, load_env_file, parse_env_file
 
 from .forms import RegisterForm
 from .models import BacklogItem, CatalogItem, Commitment, MediaType, Profile, RecurringBlock, Suggestion
@@ -1020,3 +1025,67 @@ class ResetAccountsTests(TestCase):
         with self.assertRaises(CommandError):
             self.run_command("--yes")
         self.assertEqual(self.usernames(), {"student", "demo", "boss"})
+
+
+class EnvFileTests(TestCase):
+    def write(self, text, encoding="utf-8"):
+        directory = tempfile.TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        path = Path(directory.name) / ".env"
+        path.write_bytes(text.encode(encoding))
+        return path
+
+    def test_reads_names_and_values(self):
+        path = self.write('A=1\nB = "two words"\nC=\'single\'\nD=plain\n')
+        self.assertEqual(parse_env_file(path), {"A": "1", "B": "two words", "C": "single", "D": "plain"})
+
+    def test_skips_blank_lines_comments_and_junk(self):
+        path = self.write("# a comment\n\n   \nnot a setting\n=orphan\nA=1\n")
+        self.assertEqual(parse_env_file(path), {"A": "1"})
+
+    def test_accepts_export_prefix(self):
+        self.assertEqual(parse_env_file(self.write("export A=1\n")), {"A": "1"})
+
+    def test_quoted_values_keep_hashes_and_equals_signs(self):
+        path = self.write('A="pass#word=1"\nB="two  spaces"\n')
+        self.assertEqual(parse_env_file(path), {"A": "pass#word=1", "B": "two  spaces"})
+
+    def test_unquoted_values_can_have_trailing_comments(self):
+        path = self.write("A=1 # one\nB=x#y\n")
+        self.assertEqual(parse_env_file(path), {"A": "1", "B": "x#y"})
+
+    def test_values_may_contain_angle_brackets_and_equals_signs(self):
+        path = self.write('FROM="MediaFlow <team@example.com>"\nKEY=abc==\n')
+        self.assertEqual(parse_env_file(path), {"FROM": "MediaFlow <team@example.com>", "KEY": "abc=="})
+
+    def test_handles_a_byte_order_mark_and_windows_line_endings(self):
+        path = self.write("﻿A=1\r\nB=2\r\n")
+        self.assertEqual(parse_env_file(path), {"A": "1", "B": "2"})
+
+    def test_a_missing_file_is_fine(self):
+        self.assertEqual(parse_env_file(Path(tempfile.gettempdir()) / "no-such-dir" / ".env"), {})
+
+    def test_load_sets_variables(self):
+        path = self.write("MEDIAFLOW_TEST_A=hello\n")
+        with mock.patch.dict(os.environ, clear=False):
+            os.environ.pop("MEDIAFLOW_TEST_A", None)
+            load_env_file(path)
+            self.assertEqual(os.environ["MEDIAFLOW_TEST_A"], "hello")
+
+    def test_real_environment_variables_win_over_the_file(self):
+        path = self.write("MEDIAFLOW_TEST_A=from-file\n")
+        with mock.patch.dict(os.environ, {"MEDIAFLOW_TEST_A": "from-terminal"}):
+            load_env_file(path)
+            self.assertEqual(os.environ["MEDIAFLOW_TEST_A"], "from-terminal")
+
+    def test_the_example_file_parses_and_holds_only_placeholders(self):
+        values = parse_env_file(Path(__file__).resolve().parent.parent / ".env.example")
+        self.assertEqual(values["EMAIL_HOST"], "smtp.gmail.com")
+        self.assertIn("@gmail.com", values["EMAIL_HOST_USER"])
+        self.assertTrue(values["EMAIL_HOST_USER"].startswith("your."))
+        self.assertEqual(values["EMAIL_HOST_PASSWORD"], "abcd efgh ijkl mnop")
+
+    def test_gmail_app_passwords_are_used_without_the_spaces_google_shows(self):
+        # Settings strips spaces for Gmail, since Google displays the code in groups.
+        self.assertEqual(clean_smtp_password("smtp.gmail.com", "abcd efgh ijkl mnop"), "abcdefghijklmnop")
+        self.assertEqual(clean_smtp_password("smtp.example.com", "has a space"), "has a space")

@@ -95,19 +95,27 @@ that existed before this was added were marked confirmed by the migration, and
 staff accounts are never held back.
 
 Nothing needs a mail server to run locally. By default Django prints the email
-in the terminal where `runserver` is running, so copy the link from there. To
-send real mail, set these environment variables before starting the server:
+in the terminal where `runserver` is running, so copy the link from there.
+
+To send real mail, copy the example settings file and fill it in:
 
 ```powershell
-$env:EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-$env:EMAIL_HOST = "smtp.example.com"
-$env:EMAIL_HOST_USER = "..."
-$env:EMAIL_HOST_PASSWORD = "..."
-$env:DEFAULT_FROM_EMAIL = "MediaFlow <noreply@example.com>"
+copy .env.example .env
 ```
 
-`EMAIL_PORT` (587) and `EMAIL_USE_TLS` (true) have defaults. To confirm
-someone by hand, tick `email_verified` on their profile in the admin.
+`.env` is read when the server starts, so restart it after editing. It is
+ignored by git, so the password stays on your machine. Everyone on the team
+makes their own, or shares one project account's details privately, never in
+the repo. A variable set in the terminal beats the same one in `.env`.
+
+For Gmail, `EMAIL_HOST_PASSWORD` must be an app password, not the account's
+normal password. Turn on 2-Step Verification, then Google Account, Security,
+App passwords. Google shows it in groups of four letters and spaces are fine.
+Other providers work too, set the host, user and password they give you.
+`EMAIL_PORT` (587) and `EMAIL_USE_TLS` (true) have defaults.
+
+To confirm someone by hand, tick `email_verified` on their profile in the
+admin.
 
 To test sign-up over and over, wipe the accounts between tries:
 
@@ -174,9 +182,11 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      113 tests, mostly on the scheduling
+  tests.py      125 tests, mostly on the scheduling
   management/commands/seed_catalog.py
   management/commands/reset_accounts.py
+mediaflow/env.py   reads .env at startup
+.env.example   copy to .env for real email settings
 templates/
 static/js/reminders.js   polls for upcoming sessions and shows notifications
 static/src/app.css   Tailwind source (edit this)
