@@ -249,6 +249,58 @@ def suggest_for_day(user, day=None, limit=3, persist=True):
     return suggestions
 
 
+DEFAULT_REMINDER_LEAD = 15
+
+
+def reminder_lead_minutes(user):
+    profile = getattr(user, "profile", None)
+    return profile.notify_lead_minutes if profile else DEFAULT_REMINDER_LEAD
+
+
+def upcoming_reminders(user, now=None, lead=None):
+    """Accepted sessions and commitments starting within the lead window.
+
+    Returns dicts rather than model rows so the same data feeds the dashboard
+    banner and the JSON endpoint the browser polls. `key` is stable per event
+    and start time, which is what lets the browser avoid notifying twice.
+    """
+    now = timezone.localtime(now or timezone.now())
+    lead = reminder_lead_minutes(user) if lead is None else lead
+    horizon = now + timedelta(minutes=lead)
+    reminders = []
+
+    sessions = user.suggestions.filter(
+        status=Suggestion.Status.ACCEPTED, date__in={now.date(), horizon.date()}
+    ).select_related("backlog_item")
+    for suggestion in sessions:
+        starts = timezone.make_aware(datetime.combine(suggestion.date, suggestion.start_time))
+        if now <= starts <= horizon:
+            reminders.append(
+                {
+                    "key": f"session-{suggestion.pk}-{starts.isoformat()}",
+                    "kind": "session",
+                    "title": suggestion.backlog_item.title,
+                    "starts_at": starts,
+                    "minutes_until": max(0, round((starts - now).total_seconds() / 60)),
+                    "detail": f"{humanize_minutes(suggestion.minutes)} planned",
+                }
+            )
+
+    for commitment in user.commitments.filter(starts_at__gte=now, starts_at__lte=horizon):
+        reminders.append(
+            {
+                "key": f"commitment-{commitment.pk}-{commitment.starts_at.isoformat()}",
+                "kind": "commitment",
+                "title": commitment.title,
+                "starts_at": commitment.starts_at,
+                "minutes_until": max(0, round((commitment.starts_at - now).total_seconds() / 60)),
+                "detail": "Commitment",
+            }
+        )
+
+    return sorted(reminders, key=lambda r: r["starts_at"])
+
+
 def day_plan(user, day):
     """Everything the dashboard and the calendar day panel need."""
     return {

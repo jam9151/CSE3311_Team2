@@ -20,6 +20,14 @@
   </div>
 {% endif %}
 
+{% for reminder in reminders %}
+  <div class="mb-3 rounded-lg border border-good/30 bg-good/10 px-3.5 py-2.5 text-sm" role="status">
+    <strong>{{ reminder.title }}</strong>
+    {% if reminder.minutes_until %}starts in {{ reminder.minutes_until }} min{% else %}is starting now{% endif %}
+    &middot; {{ reminder.detail }}
+  </div>
+{% endfor %}
+
 <div class="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
   <div class="card">
     <div class="text-2xl font-bold tracking-tight">{{ free_label }}</div>

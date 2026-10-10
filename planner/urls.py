@@ -19,7 +19,11 @@ urlpatterns = [
     # Schedule and calendar
     path("schedule/", views.weekly_schedule, name="weekly_schedule"),
     path("schedule/block/<int:pk>/delete/", views.delete_block, name="delete_block"),
+    path("schedule/block/<int:pk>/edit/", views.edit_block, name="edit_block"),
     path("schedule/commitment/new/", views.add_commitment, name="add_commitment"),
+    path("schedule/commitment/<int:pk>/edit/", views.edit_commitment, name="edit_commitment"),
+    path("schedule/commitment/<int:pk>/delete/", views.delete_commitment, name="delete_commitment"),
+    path("notifications/upcoming/", views.reminders_json, name="reminders_json"),
     path("calendar/", views.calendar, name="calendar"),
     # Suggestions
     path("suggestions/refresh/", views.refresh_suggestions, name="refresh_suggestions"),

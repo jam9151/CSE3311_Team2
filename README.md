@@ -76,12 +76,25 @@ mermaid diagrams are drawn by a real browser.
 | Media search | done, filter by type / genre / length |
 | Media details | done, shows whether it fits your free time today |
 | Visual calendar | done, month grid + day panel |
-| Weekly schedule | done, recurring blocks and one-off commitments |
+| Weekly schedule | done, recurring blocks and one-off commitments, both editable |
 | Priority system | done, 1-5, editable from the backlog list |
 | Free time detection | done |
 | Accept/reject suggestions | done, rejections feed back into the scoring |
 | Review manager | done |
-| Push notifications | not started, still a stretch item |
+| Notifications | partly done, reminders while a tab is open, no background push yet |
+
+## Reminders
+
+Turn them on from the Reminders card on My week and pick how many minutes of
+warning you want. Anything accepted onto your calendar, and any one-off
+commitment, then shows up in two places when it is about to start: a banner on
+Today, and a browser notification if you've allowed them.
+
+This is not true push. `static/js/reminders.js` asks `/notifications/upcoming/`
+once a minute, so reminders only fire while a MediaFlow tab is open. Reminding
+someone with the browser closed needs a service worker, VAPID keys, the
+`pywebpush` package and something on the server running on a timer. That is the
+next step if we want it.
 
 ## How the scheduling works
 
@@ -114,9 +127,10 @@ planner/
   services.py   free time detection + suggestion scoring
   views.py
   forms.py      includes the mavs.uta.edu signup check
-  tests.py      27 tests, mostly on the scheduling
+  tests.py      52 tests, mostly on the scheduling
   management/commands/seed_catalog.py
 templates/
+static/js/reminders.js   polls for upcoming sessions and shows notifications
 static/src/app.css   Tailwind source (edit this)
 static/css/app.css   built output (don't edit)
 ```

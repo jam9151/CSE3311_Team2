@@ -60,6 +60,18 @@ class ProfileForm(forms.ModelForm):
         return cleaned
 
 
+class NotificationSettingsForm(forms.ModelForm):
+    class Meta:
+        model = Profile
+        fields = ["notify_enabled", "notify_lead_minutes"]
+        labels = {
+            "notify_enabled": "Remind me before things start",
+            "notify_lead_minutes": "Minutes of warning",
+        }
+        help_texts = {"notify_enabled": "", "notify_lead_minutes": "Between 1 and 120."}
+        widgets = {"notify_lead_minutes": forms.NumberInput(attrs={"min": 1, "max": 120})}
+
+
 class BacklogItemForm(forms.ModelForm):
     class Meta:
         model = BacklogItem

@@ -57,5 +57,8 @@
   <footer class="border-t border-line px-6 py-4 text-sm text-muted">
     MediaFlow &middot; CSE 3311 Team 2 prototype
   </footer>
+  {% if user.is_authenticated %}
+    <script defer src="{% static 'js/reminders.js' %}" data-url="{% url 'reminders_json' %}"></script>
+  {% endif %}
 </body>
 </html>

@@ -41,6 +41,7 @@
           {% for block in group.list %}
             <div class="text-sm text-muted">
               {{ block.label }} &middot; {{ block.start_time|time:"g:i A" }}–{{ block.end_time|time:"g:i A" }}
+              <a class="text-xs" href="{% url 'edit_block' block.pk %}">edit</a>
               <form class="inline" method="post" action="{% url 'delete_block' block.pk %}">
                 {% csrf_token %}<button class="btn-link text-xs">remove</button>
               </form>
@@ -56,9 +57,15 @@
       <div class="card-head mt-6"><h2>One-off commitments</h2></div>
       {% for commitment in commitments %}
         <div class="row">
-          <div>
+          <div class="flex-1">
             <strong>{{ commitment.title }}</strong>
             <p class="text-xs text-muted">{{ commitment.starts_at|date:"D, M j · g:i A" }} – {{ commitment.ends_at|date:"g:i A" }}</p>
+          </div>
+          <div class="text-sm">
+            <a class="text-xs" href="{% url 'edit_commitment' commitment.pk %}">edit</a>
+            <form class="inline" method="post" action="{% url 'delete_commitment' commitment.pk %}">
+              {% csrf_token %}<button class="btn-link text-xs">remove</button>
+            </form>
           </div>
         </div>
       {% endfor %}
@@ -73,6 +80,20 @@
         {{ profile_form.as_p }}
         <button name="save_profile" value="1" class="btn btn-secondary">Save hours</button>
       </form>
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Reminders</h2></div>
+      <form method="post">
+        {% csrf_token %}
+        {{ notification_form.as_p }}
+        <button name="save_notifications" value="1" class="btn btn-secondary">Save reminders</button>
+      </form>
+      <div class="mt-3 text-sm text-muted">
+        <p data-notification-status>Checking browser support&hellip;</p>
+        <button type="button" class="btn btn-secondary mt-2" data-enable-notifications hidden>Allow browser notifications</button>
+        <p class="mt-2 text-xs">Reminders appear while MediaFlow is open in a browser tab.</p>
+      </div>
     </section>
 
     <section class="card">

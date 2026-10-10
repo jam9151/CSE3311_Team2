@@ -6,7 +6,14 @@ from django.utils import timezone
 
 from .forms import RegisterForm
 from .models import BacklogItem, CatalogItem, Commitment, MediaType, Profile, RecurringBlock, Suggestion
-from .services import free_intervals, humanize_minutes, month_grid, suggest_for_day, total_free_minutes
+from .services import (
+    free_intervals,
+    humanize_minutes,
+    month_grid,
+    suggest_for_day,
+    total_free_minutes,
+    upcoming_reminders,
+)
 
 # A Tuesday. Most of these tests pin a fixed date because free_intervals()
 # clips gaps that have already passed when the day is today, which would make
@@ -286,3 +293,241 @@ class PageTests(TestCase):
         )
         self.client.force_login(self.user)
         self.assertEqual(self.client.post(f"/suggestions/{suggestion.pk}/accept/").status_code, 404)
+
+
+class ScheduleEditTests(TestCase):
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+        self.block = RecurringBlock.objects.create(
+            user=self.user, label="CSE 3311", weekday=TEST_DAY.weekday(),
+            start_time=time(11), end_time=time(12, 20),
+        )
+        self.commitment = Commitment.objects.create(
+            user=self.user, title="Group project",
+            starts_at=timezone.make_aware(datetime(2030, 3, 5, 18, 0)),
+            ends_at=timezone.make_aware(datetime(2030, 3, 5, 20, 0)),
+        )
+
+    def block_post(self, **overrides):
+        data = {"label": "CSE 3311", "kind": "class", "weekday": TEST_DAY.weekday(),
+                "start_time": "13:00", "end_time": "14:20"}
+        return self.client.post(f"/schedule/block/{self.block.pk}/edit/", {**data, **overrides})
+
+    def test_edit_block_form_is_prefilled(self):
+        response = self.client.get(f"/schedule/block/{self.block.pk}/edit/")
+        self.assertContains(response, 'value="CSE 3311"')
+
+    def test_edit_block_saves_and_moves_free_time(self):
+        self.assertRedirects(self.block_post(), "/schedule/")
+        self.block.refresh_from_db()
+        self.assertEqual((self.block.start_time, self.block.end_time), (time(13), time(14, 20)))
+        gaps = free_intervals(self.user, TEST_DAY)
+        self.assertEqual([(g.start, g.end) for g in gaps], [(time(8), time(13)), (time(14, 20), time(23))])
+
+    def test_edit_block_rejects_end_before_start(self):
+        response = self.block_post(start_time="15:00", end_time="14:00")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "End time must be after start time.")
+        self.block.refresh_from_db()
+        self.assertEqual(self.block.start_time, time(11))
+
+    def test_edit_commitment_shows_local_time_and_saves(self):
+        response = self.client.get(f"/schedule/commitment/{self.commitment.pk}/edit/")
+        self.assertContains(response, 'value="2030-03-05T18:00"')
+
+        response = self.client.post(
+            f"/schedule/commitment/{self.commitment.pk}/edit/",
+            {"title": "Group project (moved)", "starts_at": "2030-03-06T09:00", "ends_at": "2030-03-06T10:30"},
+        )
+        self.assertRedirects(response, "/schedule/")
+        self.commitment.refresh_from_db()
+        self.assertEqual(self.commitment.title, "Group project (moved)")
+        self.assertEqual(timezone.localtime(self.commitment.starts_at).hour, 9)
+
+    def test_edit_commitment_rejects_end_before_start(self):
+        response = self.client.post(
+            f"/schedule/commitment/{self.commitment.pk}/edit/",
+            {"title": "Group project", "starts_at": "2030-03-05T20:00", "ends_at": "2030-03-05T18:00"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.commitment.refresh_from_db()
+        self.assertEqual(timezone.localtime(self.commitment.starts_at).hour, 18)
+
+    def test_delete_commitment(self):
+        self.assertRedirects(self.client.post(f"/schedule/commitment/{self.commitment.pk}/delete/"), "/schedule/")
+        self.assertFalse(Commitment.objects.filter(pk=self.commitment.pk).exists())
+
+    def test_delete_commitment_needs_post(self):
+        self.assertEqual(self.client.get(f"/schedule/commitment/{self.commitment.pk}/delete/").status_code, 405)
+        self.assertTrue(Commitment.objects.filter(pk=self.commitment.pk).exists())
+
+    def test_schedule_page_links_to_edit_screens(self):
+        response = self.client.get("/schedule/")
+        self.assertContains(response, f"/schedule/block/{self.block.pk}/edit/")
+        self.assertContains(response, f"/schedule/commitment/{self.commitment.pk}/edit/")
+
+    def test_cannot_touch_another_users_schedule(self):
+        other = make_user("mallory")
+        block = RecurringBlock.objects.create(
+            user=other, label="Theirs", weekday=0, start_time=time(9), end_time=time(10)
+        )
+        commitment = Commitment.objects.create(
+            user=other, title="Theirs", starts_at=timezone.now() + timedelta(days=1),
+            ends_at=timezone.now() + timedelta(days=1, hours=1),
+        )
+        for method, url in [
+            (self.client.get, f"/schedule/block/{block.pk}/edit/"),
+            (self.client.post, f"/schedule/block/{block.pk}/edit/"),
+            (self.client.get, f"/schedule/commitment/{commitment.pk}/edit/"),
+            (self.client.post, f"/schedule/commitment/{commitment.pk}/edit/"),
+            (self.client.post, f"/schedule/commitment/{commitment.pk}/delete/"),
+        ]:
+            with self.subTest(url=url):
+                self.assertEqual(method(url).status_code, 404)
+        self.assertTrue(Commitment.objects.filter(pk=commitment.pk).exists())
+
+    def test_edit_screens_require_login(self):
+        self.client.logout()
+        for url in [f"/schedule/block/{self.block.pk}/edit/", f"/schedule/commitment/{self.commitment.pk}/edit/"]:
+            with self.subTest(url=url):
+                self.assertRedirects(self.client.get(url), f"/accounts/login/?next={url}")
+
+
+class ReminderTests(TestCase):
+    def setUp(self):
+        self.user = make_user()
+        self.now = timezone.make_aware(datetime(2026, 10, 6, 18, 0))
+        self.item = BacklogItem.objects.create(
+            user=self.user, title="Dune", media_type=MediaType.BOOK, estimated_minutes=600
+        )
+
+    def session(self, start, status=Suggestion.Status.ACCEPTED, day=None):
+        return Suggestion.objects.create(
+            user=self.user, backlog_item=self.item, date=day or TEST_DAY, start_time=start,
+            end_time=time(23, 59), minutes=60, status=status,
+        )
+
+    def titles(self, **kwargs):
+        return [r["title"] for r in upcoming_reminders(self.user, now=self.now, **kwargs)]
+
+    def test_session_inside_the_window_is_reminded(self):
+        self.session(time(18, 10))
+        reminders = upcoming_reminders(self.user, now=self.now, lead=15)
+        self.assertEqual([r["title"] for r in reminders], ["Dune"])
+        self.assertEqual(reminders[0]["minutes_until"], 10)
+
+    def test_window_edges(self):
+        self.session(time(18, 15))   # exactly at the horizon
+        self.session(time(18, 16))   # one minute too far out
+        self.session(time(17, 59))   # already started
+        self.assertEqual(len(upcoming_reminders(self.user, now=self.now, lead=15)), 1)
+
+    def test_only_accepted_sessions_count(self):
+        for status in [Suggestion.Status.PENDING, Suggestion.Status.REJECTED, Suggestion.Status.DONE]:
+            self.session(time(18, 5), status=status)
+        self.assertEqual(self.titles(lead=15), [])
+
+    def test_window_can_cross_midnight(self):
+        late = timezone.make_aware(datetime(2026, 10, 6, 23, 55))
+        self.session(time(0, 5), day=date(2026, 10, 7))
+        reminders = upcoming_reminders(self.user, now=late, lead=15)
+        self.assertEqual([r["minutes_until"] for r in reminders], [10])
+
+    def test_commitment_is_reminded(self):
+        Commitment.objects.create(
+            user=self.user, title="Study group",
+            starts_at=self.now + timedelta(minutes=10), ends_at=self.now + timedelta(hours=1),
+        )
+        reminders = upcoming_reminders(self.user, now=self.now, lead=15)
+        self.assertEqual([(r["kind"], r["title"]) for r in reminders], [("commitment", "Study group")])
+
+    def test_sorted_soonest_first_and_key_changes_with_start_time(self):
+        later = self.session(time(18, 12))
+        sooner = Commitment.objects.create(
+            user=self.user, title="Quick call",
+            starts_at=self.now + timedelta(minutes=3), ends_at=self.now + timedelta(minutes=30),
+        )
+        reminders = upcoming_reminders(self.user, now=self.now, lead=15)
+        self.assertEqual([r["title"] for r in reminders], ["Quick call", "Dune"])
+        old_key = reminders[1]["key"]
+        later.start_time = time(18, 14)
+        later.save()
+        self.assertNotEqual(upcoming_reminders(self.user, now=self.now, lead=15)[1]["key"], old_key)
+
+    def test_other_users_events_are_not_included(self):
+        other = make_user("mallory")
+        Commitment.objects.create(
+            user=other, title="Not yours",
+            starts_at=self.now + timedelta(minutes=5), ends_at=self.now + timedelta(hours=1),
+        )
+        self.assertEqual(self.titles(lead=15), [])
+
+    def test_lead_comes_from_the_profile(self):
+        self.session(time(18, 40))
+        self.assertEqual(self.titles(), [])
+        self.user.profile.notify_lead_minutes = 45
+        self.user.profile.save()
+        self.assertEqual(self.titles(), ["Dune"])
+
+
+class ReminderViewTests(TestCase):
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+        start = timezone.localtime() + timedelta(minutes=5)
+        item = BacklogItem.objects.create(
+            user=self.user, title="Dune", media_type=MediaType.BOOK, estimated_minutes=600
+        )
+        Suggestion.objects.create(
+            user=self.user, backlog_item=item, date=start.date(), start_time=start.time(),
+            end_time=start.time(), minutes=60, status=Suggestion.Status.ACCEPTED,
+        )
+
+    def test_endpoint_requires_login(self):
+        self.client.logout()
+        self.assertRedirects(
+            self.client.get("/notifications/upcoming/"), "/accounts/login/?next=/notifications/upcoming/"
+        )
+
+    def test_endpoint_is_empty_until_the_user_opts_in(self):
+        data = self.client.get("/notifications/upcoming/").json()
+        self.assertEqual(data, {"enabled": False, "reminders": []})
+
+    def test_endpoint_lists_reminders_once_enabled(self):
+        self.user.profile.notify_enabled = True
+        self.user.profile.save()
+        data = self.client.get("/notifications/upcoming/").json()
+        self.assertTrue(data["enabled"])
+        self.assertEqual([r["title"] for r in data["reminders"]], ["Dune"])
+        self.assertIn("starts in", data["reminders"][0]["body"])
+
+    def test_dashboard_banner_shows_upcoming_session(self):
+        self.assertContains(self.client.get("/dashboard/"), "Dune")
+        self.assertContains(self.client.get("/dashboard/"), "starts in")
+
+    def test_settings_form_saves(self):
+        response = self.client.post(
+            "/schedule/", {"save_notifications": "1", "notify_enabled": "on", "notify_lead_minutes": "30"}
+        )
+        self.assertRedirects(response, "/schedule/")
+        self.user.profile.refresh_from_db()
+        self.assertTrue(self.user.profile.notify_enabled)
+        self.assertEqual(self.user.profile.notify_lead_minutes, 30)
+
+    def test_settings_form_rejects_bad_lead_time(self):
+        for value in ["0", "121"]:
+            with self.subTest(value=value):
+                response = self.client.post(
+                    "/schedule/", {"save_notifications": "1", "notify_enabled": "on", "notify_lead_minutes": value}
+                )
+                self.assertEqual(response.status_code, 200)
+                self.user.profile.refresh_from_db()
+                self.assertEqual(self.user.profile.notify_lead_minutes, 15)
+
+    def test_unchecking_turns_reminders_off(self):
+        self.user.profile.notify_enabled = True
+        self.user.profile.save()
+        self.client.post("/schedule/", {"save_notifications": "1", "notify_lead_minutes": "15"})
+        self.user.profile.refresh_from_db()
+        self.assertFalse(self.user.profile.notify_enabled)

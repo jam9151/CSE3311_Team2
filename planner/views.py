@@ -5,7 +5,7 @@ from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.db.models import Q
-from django.http import Http404
+from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
 from django.views.decorators.http import require_POST
@@ -14,13 +14,22 @@ from .forms import (
     BacklogItemForm,
     CatalogSearchForm,
     CommitmentForm,
+    NotificationSettingsForm,
     ProfileForm,
     RecurringBlockForm,
     RegisterForm,
     ReviewForm,
 )
-from .models import BacklogItem, CatalogItem, MediaType, Profile, RecurringBlock, Review, Suggestion
-from .services import day_plan, free_intervals, humanize_minutes, month_grid, suggest_for_day, total_free_minutes
+from .models import BacklogItem, CatalogItem, Commitment, MediaType, Profile, RecurringBlock, Review, Suggestion
+from .services import (
+    day_plan,
+    free_intervals,
+    humanize_minutes,
+    month_grid,
+    suggest_for_day,
+    total_free_minutes,
+    upcoming_reminders,
+)
 
 
 def _parse_date(raw, fallback=None):
@@ -75,6 +84,7 @@ def dashboard(request):
         "in_progress": backlog.filter(status=BacklogItem.Status.IN_PROGRESS)[:4],
         "recent_reviews": request.user.reviews.select_related("backlog_item")[:3],
         "needs_schedule": not request.user.recurring_blocks.exists(),
+        "reminders": upcoming_reminders(request.user),
     }
     return render(request, "planner/dashboard.html", context)
 
@@ -278,15 +288,21 @@ def backlog_delete(request, pk):
 def weekly_schedule(request):
     profile, _ = Profile.objects.get_or_create(user=request.user)
 
-    # Two forms on the page, told apart by which submit button was used.
+    # Three forms on the page, told apart by which submit button was used.
     saving_profile = "save_profile" in request.POST
     adding_block = "add_block" in request.POST
+    saving_notifications = "save_notifications" in request.POST
     profile_form = ProfileForm(request.POST if saving_profile else None, instance=profile)
     block_form = RecurringBlockForm(request.POST if adding_block else None)
+    notification_form = NotificationSettingsForm(request.POST if saving_notifications else None, instance=profile)
 
     if saving_profile and profile_form.is_valid():
         profile_form.save()
         messages.success(request, "Waking hours updated.")
+        return redirect("weekly_schedule")
+    if saving_notifications and notification_form.is_valid():
+        notification_form.save()
+        messages.success(request, "Reminder settings saved.")
         return redirect("weekly_schedule")
     if adding_block and block_form.is_valid():
         block = block_form.save(commit=False)
@@ -317,6 +333,7 @@ def weekly_schedule(request):
         {
             "profile_form": profile_form,
             "block_form": block_form,
+            "notification_form": notification_form,
             "week": week,
             "commitments": request.user.commitments.filter(ends_at__gte=timezone.now())[:10],
         },
@@ -332,6 +349,21 @@ def delete_block(request, pk):
 
 
 @login_required
+def edit_block(request, pk):
+    block = get_object_or_404(RecurringBlock, pk=pk, user=request.user)
+    form = RecurringBlockForm(request.POST or None, instance=block)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, f"Updated {block.label}.")
+        return redirect("weekly_schedule")
+    return render(
+        request,
+        "planner/form.html",
+        {"form": form, "heading": f"Edit {block.label}", "cancel_url": "weekly_schedule"},
+    )
+
+
+@login_required
 def add_commitment(request):
     form = CommitmentForm(request.POST or None)
     if request.method == "POST" and form.is_valid():
@@ -344,6 +376,52 @@ def add_commitment(request):
         request,
         "planner/form.html",
         {"form": form, "heading": "Add a one-off commitment", "cancel_url": "weekly_schedule"},
+    )
+
+
+@login_required
+def edit_commitment(request, pk):
+    commitment = get_object_or_404(Commitment, pk=pk, user=request.user)
+    form = CommitmentForm(request.POST or None, instance=commitment)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Commitment updated.")
+        return redirect("weekly_schedule")
+    return render(
+        request,
+        "planner/form.html",
+        {"form": form, "heading": f"Edit {commitment.title}", "cancel_url": "weekly_schedule"},
+    )
+
+
+@login_required
+@require_POST
+def delete_commitment(request, pk):
+    get_object_or_404(Commitment, pk=pk, user=request.user).delete()
+    messages.success(request, "Commitment removed.")
+    return redirect("weekly_schedule")
+
+
+@login_required
+def reminders_json(request):
+    """Polled by static/js/reminders.js. Empty unless the user opted in."""
+    profile = getattr(request.user, "profile", None)
+    enabled = bool(profile and profile.notify_enabled)
+    reminders = upcoming_reminders(request.user) if enabled else []
+    return JsonResponse(
+        {
+            "enabled": enabled,
+            "reminders": [
+                {
+                    "key": r["key"],
+                    "title": r["title"],
+                    "body": f"{r['detail']} · starts in {r['minutes_until']} min"
+                    if r["minutes_until"]
+                    else f"{r['detail']} · starting now",
+                }
+                for r in reminders
+            ],
+        }
     )
 
 
