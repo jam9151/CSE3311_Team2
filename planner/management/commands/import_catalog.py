@@ -16,6 +16,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from planner.catalog_import import SOURCES, HttpFetcher, ImportFailure, save_record
+from planner.models import CatalogItem
 
 
 class Command(BaseCommand):
@@ -30,6 +31,12 @@ class Command(BaseCommand):
         )
         parser.add_argument("--limit", type=int, default=150, help="Titles to import per type. Default 150.")
         parser.add_argument("--dry-run", action="store_true", help="List what would be imported and save nothing.")
+        parser.add_argument(
+            "--skip-existing",
+            action="store_true",
+            help="Pass over titles already imported without asking the source again. Titles already "
+            "there count toward --limit, so an interrupted run can be repeated to carry on.",
+        )
 
     def handle(self, *args, **options):
         if options["limit"] < 1:
@@ -49,7 +56,10 @@ class Command(BaseCommand):
                 )
                 continue
 
-            source = source_class(HttpFetcher(user_agent, pause=source_class.pause(bool(contact))), key)
+            known = ()
+            if options["skip_existing"] and source_class.source_label:
+                known = CatalogItem.objects.filter(source=source_class.source_label).values_list("source_id", flat=True)
+            source = source_class(HttpFetcher(user_agent, pause=source_class.pause(bool(contact))), key, known)
             counts = Counter()
             self.stdout.write(f"Importing {name}, up to {options['limit']}...")
             try:
@@ -58,19 +68,21 @@ class Command(BaseCommand):
                     counts[outcome] += 1
                     if options["dry_run"]:
                         self.stdout.write(f"  {record.title} ({record.typical_minutes} min)")
-                    elif sum(counts.values()) % 25 == 0:
+                    elif sum(counts.values()) % 100 == 0:
                         self.stdout.write(f"  {sum(counts.values())} so far")
             except ImportFailure as error:
                 failures.append(name)
                 self.stderr.write(self.style.ERROR(f"  {name} stopped early: {error}"))
 
-            self.stdout.write(self.style.SUCCESS(f"  {name}: {self._summary(counts, source.skipped)}"))
+            self.stdout.write(
+                self.style.SUCCESS(f"  {name}: {self._summary(counts, source.skipped, source.already_have)}")
+            )
 
         if failures:
             raise CommandError(f"Did not finish: {', '.join(failures)}. What was fetched before the problem is saved.")
 
     @staticmethod
-    def _summary(counts, skipped):
+    def _summary(counts, skipped, already_have=0):
         words = {
             "created": "added",
             "updated": "refreshed",
@@ -78,6 +90,8 @@ class Command(BaseCommand):
             "would add": "would add",
         }
         parts = [f"{counts[outcome]} {word}" for outcome, word in words.items() if counts[outcome]]
+        if already_have:
+            parts.append(f"{already_have} already imported, passed over")
         if skipped:
             reasons = ", ".join(f"{reason} {number}" for reason, number in skipped.most_common())
             parts.append(f"left out {sum(skipped.values())} ({reasons})")

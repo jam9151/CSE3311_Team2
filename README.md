@@ -92,7 +92,7 @@ mermaid diagrams are drawn by a real browser.
 ## Growing the catalog
 
 `seed_catalog` loads 36 hand-entered titles. `import_catalog` pulls real ones
-from free sources, a few hundred at a time:
+from free sources, from a handful up to about 10,000 per type:
 
 ```powershell
 python manage.py import_catalog --only books    # works right away, no key
@@ -128,6 +128,50 @@ make to an imported row in the admin are overwritten. A title you entered by
 hand, or that came from the seed data, wins over an imported one with the same
 title, type and year. If a source fails partway, what was saved before the
 problem stays saved.
+
+### A very large catalog
+
+For the full 10,000 of each, run the types separately so one failing doesn't
+hold up the others. `--skip-existing` is what makes a long run safe to stop and
+carry on:
+
+```powershell
+python manage.py import_catalog --only movies tv --limit 10000 --skip-existing
+python manage.py import_catalog --only games --limit 10000 --skip-existing
+python manage.py import_catalog --only books --limit 2000 --skip-existing
+```
+
+With `--skip-existing`, titles already in the catalog are passed over without
+asking the source again, and they count toward `--limit`. So `--limit 10000`
+means "get me to 10,000 of this type", and running the same command again after
+an interruption carries on from where it stopped. It still has to walk the
+source's list from the top to find where it was, which costs a few minutes at
+this size but no per-title requests. Without the flag, a rerun refreshes every
+title it meets, which is slower.
+
+How far each source goes:
+
+- **Movies and TV.** TMDB refuses any page past 500, so each of its lists gives
+  at most 10,000. The importer walks three side by side, top rated, popular and
+  most voted, and skips what it has already seen. TMDB's top rated TV list is
+  only about 2,600 shows long, which is why the third list is there. Talk shows,
+  news, soaps, shows with no episode length and shows over about 400 hours are
+  left out, which cuts roughly a fifth of TV, so expect TV to land near 10,000
+  rather than exactly on it. Movies lose very few.
+- **Speed.** Details are fetched six at a time for TMDB and three at a time for
+  RAWG. A live test of 300 movies and 300 shows took 43 seconds, so 10,000 of
+  each should take on the order of half an hour. Games have not been timed.
+- **Games.** RAWG's free key is limited per month. Third party sources say
+  20,000 requests, which I could not confirm. The importer spends one request
+  per game kept plus one per 40 listed, and skips the request for a game the
+  list already shows has no playtime. 10,000 games is about half that, so don't
+  run it twice from scratch. `--skip-existing` makes a rerun free.
+- **Books.** Open Library asks for about three requests a second at most, so
+  books are fetched one at a time and are the slowest. The genre searches yield
+  low thousands of usable books.
+
+Each person imports into their own `db.sqlite3`, which git ignores, so every
+teammate and any deployed copy has to run the import themselves.
 
 Book genres come from Open Library's subject tags and are approximate. Game
 playtimes are what RAWG's players report, so a few are off. Catalog data is
@@ -361,7 +405,7 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      291 tests, mostly on the scheduling
+  tests.py      312 tests, mostly on the scheduling
   management/commands/seed_catalog.py
   management/commands/reset_accounts.py
   management/commands/import_catalog.py

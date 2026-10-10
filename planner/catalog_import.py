@@ -22,6 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from collections import Counter
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import date, datetime
 
@@ -154,20 +155,41 @@ class HttpFetcher:
 
 
 class Source:
-    """Base class: `records(limit)` yields Records, `skipped` counts what it dropped and why."""
+    """Base class: `records(limit)` yields Records, `skipped` counts what it dropped and why.
+
+    `known` is the set of source ids already in the catalog. A source passes
+    over those without a request and counts them toward the limit, which is
+    what lets an interrupted import pick up where it stopped.
+    """
 
     name = ""
     media_type = ""
     key_env = ""  # empty means no key needed
+    source_label = ""  # what CatalogItem.source holds for rows from here
+    workers = 1  # how many detail requests may be in flight at once
 
-    def __init__(self, fetcher, key=""):
+    def __init__(self, fetcher, key="", known=()):
         self.fetcher = fetcher
         self.key = key
+        self.known = set(known)
         self.skipped = Counter()
+        self.already_have = 0
 
     @classmethod
     def pause(cls, has_contact):
         return 0.1
+
+    def fetch_each(self, fetch, items):
+        """fetch(item) for every item, in order, a few at a time.
+
+        Only the requests overlap. Everything that touches the database or the
+        counters happens afterwards, on one thread.
+        """
+        items = list(items)
+        if self.workers <= 1 or len(items) <= 1:
+            return [fetch(item) for item in items]
+        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            return list(pool.map(fetch, items))
 
     def records(self, limit):  # pragma: no cover - overridden
         raise NotImplementedError
@@ -217,6 +239,7 @@ def best_book_label(subjects):
 class BookSource(Source):
     name = "books"
     media_type = MediaType.BOOK
+    source_label = "openlibrary"
     API = "https://openlibrary.org"
 
     @classmethod
@@ -259,6 +282,16 @@ class BookSource(Source):
                         (doc.get("title") or "").strip().lower(),
                         (doc.get("author_name") or [""])[0].strip().lower(),
                     )
+                    if key.rsplit("/", 1)[-1] in self.known:
+                        self.already_have += 1
+                        seen_titles.add(name)
+                        taken += 1
+                        produced += 1
+                        if produced >= limit:
+                            return
+                        if taken >= per_subject:
+                            break
+                        continue
                     if name in seen_titles:
                         self.skipped["duplicate work"] += 1
                         continue
@@ -314,16 +347,33 @@ class BookSource(Source):
 
 
 class TmdbSource(Source):
-    """Shared by movies and TV: the key, the base URL, and walking two lists."""
+    """Shared by movies and TV: the key, the base URL, and walking three lists."""
 
     key_env = "TMDB_API_KEY"
+    source_label = "tmdb"
     API = "https://api.themoviedb.org/3"
-    lists = ("top_rated", "popular")
     kind = ""  # "movie" or "tv"
+    # TMDB answers 400 for any page past 500, so a list gives at most 10,000.
+    MAX_PAGES = 500
+    # TMDB allows around 50 requests a second. Six at once is well inside that.
+    workers = 6
 
     @classmethod
     def pause(cls, has_contact):
         return 0.05
+
+    def feeds(self):
+        """(path, extra query) for each list to walk, a page at a time, side by side.
+
+        Top rated and popular are what people mean by "top". The most voted
+        list is there because TMDB's top rated TV list is only about 2,600
+        shows long, which isn't enough to reach 10,000 on its own.
+        """
+        return [
+            (f"/{self.kind}/top_rated", {}),
+            (f"/{self.kind}/popular", {}),
+            (f"/discover/{self.kind}", {"sort_by": "vote_count.desc"}),
+        ]
 
     def _get(self, path, **params):
         # TMDB hands out a short v3 key and a long v4 token. Either one works.
@@ -335,17 +385,28 @@ class TmdbSource(Source):
 
     def records(self, limit):
         tried, produced = set(), 0
-        for page in range(1, 101):
+        for page in range(1, self.MAX_PAGES + 1):
             got_any = False
-            for which in self.lists:
-                data = self._get(f"/{self.kind}/{which}", page=page, language="en-US")
+            for path, extra in self.feeds():
+                data = self._get(path, page=page, language="en-US", **extra)
+                fresh = []
                 for row in (data or {}).get("results") or []:
                     got_any = True
                     item_id = row.get("id")
                     if not item_id or item_id in tried:
                         continue
                     tried.add(item_id)
-                    record = self._record(item_id)
+                    if f"{self.kind}-{item_id}" in self.known:
+                        self.already_have += 1
+                        produced += 1
+                        if produced >= limit:
+                            return
+                        continue
+                    fresh.append(item_id)
+
+                # Details for this page's new titles, a few at a time.
+                for item_id, details in zip(fresh, self.fetch_each(self._fetch, fresh)):
+                    record = self._record(item_id, details)
                     if record is None:
                         continue
                     yield record
@@ -355,7 +416,10 @@ class TmdbSource(Source):
             if not got_any:
                 return
 
-    def _record(self, item_id):  # pragma: no cover - overridden
+    def _fetch(self, item_id):  # pragma: no cover - overridden
+        raise NotImplementedError
+
+    def _record(self, item_id, data):  # pragma: no cover - overridden
         raise NotImplementedError
 
 
@@ -364,8 +428,10 @@ class MovieSource(TmdbSource):
     media_type = MediaType.MOVIE
     kind = "movie"
 
-    def _record(self, item_id):
-        data = self._get(f"/movie/{item_id}", append_to_response="credits", language="en-US")
+    def _fetch(self, item_id):
+        return self._get(f"/movie/{item_id}", append_to_response="credits", language="en-US")
+
+    def _record(self, item_id, data):
         if not data or not data.get("title"):
             self.skipped["details not found"] += 1
             return None
@@ -396,8 +462,10 @@ class TvSource(TmdbSource):
     media_type = MediaType.TV
     kind = "tv"
 
-    def _record(self, item_id):
-        data = self._get(f"/tv/{item_id}", language="en-US")
+    def _fetch(self, item_id):
+        return self._get(f"/tv/{item_id}", language="en-US")
+
+    def _record(self, item_id, data):
         if not data or not data.get("name"):
             self.skipped["details not found"] += 1
             return None
@@ -447,12 +515,18 @@ class GameSource(Source):
     name = "games"
     media_type = MediaType.GAME
     key_env = "RAWG_API_KEY"
+    source_label = "rawg"
     API = "https://api.rawg.io/api"
     PAGE_SIZE = 40
+    # Past this the list stops answering, which ends the import cleanly.
+    MAX_PAGES = 1000
+    # Gentle until RAWG's real rate limit is known. The free key is also capped
+    # per month, so this source tries not to spend requests it doesn't need.
+    workers = 3
 
     def records(self, limit):
         produced = 0
-        for page in range(1, 101):
+        for page in range(1, self.MAX_PAGES + 1):
             data = self.fetcher.get_json(
                 f"{self.API}/games",
                 {"key": self.key, "page_size": self.PAGE_SIZE, "page": page, "ordering": "-added"},
@@ -460,8 +534,25 @@ class GameSource(Source):
             rows = (data or {}).get("results") or []
             if not rows:
                 return
+
+            fresh = []
             for row in rows:
-                record = self._record(row)
+                game_id = row.get("id")
+                if not game_id or not row.get("name"):
+                    self.skipped["no title"] += 1
+                elif str(game_id) in self.known:
+                    self.already_have += 1
+                    produced += 1
+                    if produced >= limit:
+                        return
+                elif "playtime" in row and not 1 <= (row["playtime"] or 0) <= MAX_GAME_HOURS:
+                    # The list already says so, so the detail request would be wasted.
+                    self.skipped["no usable playtime"] += 1
+                else:
+                    fresh.append(row)
+
+            for row, detail in zip(fresh, self.fetch_each(self._fetch, fresh)):
+                record = self._record(row, detail)
                 if record is None:
                     continue
                 yield record
@@ -469,14 +560,12 @@ class GameSource(Source):
                 if produced >= limit:
                     return
 
-    def _record(self, row):
-        game_id = row.get("id")
-        if not game_id or not row.get("name"):
-            self.skipped["no title"] += 1
-            return None
+    def _fetch(self, row):
+        return self.fetcher.get_json(f"{self.API}/games/{row['id']}", {"key": self.key}) or {}
+
+    def _record(self, row, detail):
         # The detail call has the blurb and the developer. It also carries
-        # playtime, so a list that leaves it out doesn't lose us the game.
-        detail = self.fetcher.get_json(f"{self.API}/games/{game_id}", {"key": self.key}) or {}
+        # playtime, which covers a list row that leaves it out.
         hours = detail.get("playtime") or row.get("playtime") or 0
         if not 1 <= hours <= MAX_GAME_HOURS:
             self.skipped["no usable playtime"] += 1
@@ -488,7 +577,7 @@ class GameSource(Source):
         rating = one_decimal(metacritic, scale=0.1) if metacritic else one_decimal(row.get("rating"), scale=2)
         return Record(
             source="rawg",
-            source_id=str(game_id),
+            source_id=str(row["id"]),
             title=clip(row["name"], 200),
             media_type=MediaType.GAME,
             typical_minutes=int(hours) * 60,

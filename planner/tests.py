@@ -6,6 +6,7 @@ import smtplib
 import subprocess
 import sys
 import tempfile
+import threading
 import urllib.error
 import urllib.parse
 from dataclasses import FrozenInstanceError, replace
@@ -1134,14 +1135,17 @@ class FakeFetcher:
     """Stands in for HttpFetcher. `routes` maps a URL path to a response, or to a
     function of the query parameters. An unexpected URL fails the test."""
 
-    def __init__(self, routes):
+    def __init__(self, routes, fallback=None):
         self.routes = routes
+        self.fallback = fallback  # answers any path not in routes: fn(path, params)
         self.calls = []
 
     def get_json(self, url, params=None, headers=None):
         self.calls.append((url, dict(params or {}), dict(headers or {})))
         path = urllib.parse.urlparse(url).path
         if path not in self.routes:
+            if self.fallback is not None:
+                return self.fallback(path, dict(params or {}))
             raise AssertionError(f"unexpected request to {url}")
         response = self.routes[path]
         return response(dict(params or {})) if callable(response) else response
@@ -1370,10 +1374,11 @@ class BookSourceTests(TestCase):
         self.assertEqual(BookSource.key_env, "")
 
 
-def tmdb_lists(kind, top, popular):
+def tmdb_lists(kind, top, popular, discover=()):
     return {
         f"/3/{kind}/top_rated": first_page_only([{"id": i} for i in top]),
         f"/3/{kind}/popular": first_page_only([{"id": i} for i in popular]),
+        f"/3/discover/{kind}": first_page_only([{"id": i} for i in discover]),
     }
 
 
@@ -1503,7 +1508,7 @@ GAME_ROWS = [
     {"id": 102, "name": "Marathon", "playtime": 900, "genres": []},
     {"id": 103, "name": "Rated Only", "released": "2018-01-01", "rating": 4.0, "metacritic": None, "playtime": 10,
      "genres": [{"name": "Puzzle"}]},
-    {"id": 104, "name": "Detail Playtime", "playtime": 0, "genres": []},
+    {"id": 104, "name": "Detail Playtime", "genres": []},
     {"id": 105, "name": ""},
 ]
 GAME_DETAILS = {
@@ -1619,16 +1624,21 @@ class SaveRecordTests(TestCase):
 
 
 class FakeBooks(Source):
-    name, media_type, key_env = "books", MediaType.BOOK, ""
+    name, media_type, key_env, source_label = "books", MediaType.BOOK, "", "fake"
+    last = None  # the instance the command made, so a test can look inside it
 
     def records(self, limit):
-        yield Record("fake", "1", "First Book", "book", 300, genre="Fantasy")
-        yield Record("fake", "2", "Second Book", "book", 400, genre="Fantasy")
+        FakeBooks.last = self
+        for source_id, title, minutes in (("1", "First Book", 300), ("2", "Second Book", 400)):
+            if source_id in self.known:
+                self.already_have += 1
+            else:
+                yield Record("fake", source_id, title, "book", minutes, genre="Fantasy")
         self.skipped["no usable page count"] += 1
 
 
 class FakeMovies(Source):
-    name, media_type, key_env = "movies", MediaType.MOVIE, "FAKE_MOVIE_KEY"
+    name, media_type, key_env, source_label = "movies", MediaType.MOVIE, "FAKE_MOVIE_KEY", "fake"
 
     def records(self, limit):
         yield Record("fake", "m1", "A Film", "movie", 100)
@@ -2693,3 +2703,235 @@ class ErrorPageTests(TestCase):
             with self.assertLogs("django.request", level="ERROR") as logs:
                 browser.get("/boom/")
         self.assertIn("secret internal detail", "\n".join(logs.output))
+
+
+# ---------------------------------------------------------------- big imports
+
+
+def movie_json(item_id, runtime=100):
+    return {"title": f"Movie {item_id}", "runtime": runtime, "genres": [], "credits": {"crew": []}}
+
+
+class TmdbFeedTests(TestCase):
+    def test_walks_top_rated_popular_and_most_voted(self):
+        routes = {
+            **tmdb_lists("movie", top=[1], popular=[2], discover=[3]),
+            **{f"/3/movie/{i}": movie_json(i) for i in (1, 2, 3)},
+        }
+        fetcher = FakeFetcher(routes)
+        titles = [r.title for r in MovieSource(fetcher, "abc123").records(10)]
+        self.assertEqual(titles, ["Movie 1", "Movie 2", "Movie 3"])
+        discover = next(params for url, params, _ in fetcher.calls if url.endswith("/discover/movie"))
+        self.assertEqual(discover["sort_by"], "vote_count.desc")
+
+    def test_tv_uses_the_same_three_feeds(self):
+        fetcher = FakeFetcher(tmdb_lists("tv", top=[], popular=[], discover=[]))
+        list(TvSource(fetcher, "abc123").records(10))
+        self.assertEqual(
+            sorted(set(fetcher.paths())), ["/3/discover/tv", "/3/tv/popular", "/3/tv/top_rated"]
+        )
+
+    def test_a_feed_running_dry_does_not_end_the_others(self):
+        # TMDB's top rated TV list is far shorter than the other two.
+        def popular(params):
+            page = params["page"]
+            return {"results": [{"id": page * 10 + k} for k in range(3)] if page <= 3 else []}
+
+        def details(path, params):
+            return movie_json(int(path.rsplit("/", 1)[1]))
+
+        fetcher = FakeFetcher(
+            {
+                "/3/movie/top_rated": first_page_only([{"id": 1}]),
+                "/3/movie/popular": popular,
+                "/3/discover/movie": lambda params: {"results": []},
+            },
+            fallback=details,
+        )
+        titles = [r.title for r in MovieSource(fetcher, "abc123").records(100)]
+        self.assertIn("Movie 30", titles)      # only on page 3 of popular
+        self.assertEqual(len(titles), 10)      # 1 + 3 + 3 + 3
+
+    def test_never_asks_for_a_page_past_500(self):
+        # TMDB answers 400 beyond that. These feeds never run out, so only the cap stops it.
+        def everything(path, params):
+            if "/movie/" in path and path.rsplit("/", 1)[1].isdigit():
+                return None  # details not found: cheap, and nothing is produced
+            feed = {"top_rated": 1, "popular": 2, "movie": 3}[path.rsplit("/", 1)[1]]
+            return {"results": [{"id": feed * 10_000_000 + params["page"] * 100 + k} for k in range(3)]}
+
+        fetcher = FakeFetcher({}, fallback=everything)
+        source = MovieSource(fetcher, "abc123")
+        self.assertEqual(list(source.records(10**9)), [])
+        pages = [params["page"] for url, params, _ in fetcher.calls if "page" in params]
+        self.assertEqual((min(pages), max(pages)), (1, 500))
+        self.assertEqual(len(pages), 3 * 500)
+        self.assertEqual(source.skipped["details not found"], 3 * 500 * 3)
+
+    def test_details_really_are_fetched_at_the_same_time(self):
+        # Three requests wait for each other. Done one by one the barrier times out.
+        barrier = threading.Barrier(3, timeout=3)
+
+        def details(path, params):
+            barrier.wait()
+            return movie_json(int(path.rsplit("/", 1)[1]))
+
+        fetcher = FakeFetcher(
+            {**tmdb_lists("movie", top=[1, 2, 3], popular=[], discover=[])}, fallback=details
+        )
+        self.assertEqual(len(list(MovieSource(fetcher, "abc123").records(10))), 3)
+
+    def test_running_one_at_a_time_gives_the_same_records_in_the_same_order(self):
+        def build(workers):
+            routes = {
+                **tmdb_lists("movie", top=list(range(1, 9)), popular=list(range(9, 15)), discover=[]),
+                **{f"/3/movie/{i}": movie_json(i, runtime=60 + i) for i in range(1, 15)},
+            }
+            source = MovieSource(FakeFetcher(routes), "abc123")
+            source.workers = workers
+            return [(r.source_id, r.typical_minutes) for r in source.records(100)]
+
+        self.assertEqual(build(1), build(6))
+        self.assertEqual(build(1)[0], ("movie-1", 61))
+
+    def test_titles_already_imported_cost_no_request_and_count_toward_the_limit(self):
+        routes = {
+            **tmdb_lists("movie", top=[1, 2, 3, 4], popular=[], discover=[]),
+            **{f"/3/movie/{i}": movie_json(i) for i in (3, 4)},
+        }
+        fetcher = FakeFetcher(routes)
+        source = MovieSource(fetcher, "abc123", known={"movie-1", "movie-2"})
+        # A limit of 3 means 3 in the catalog in all: the two it has and one more.
+        self.assertEqual([r.title for r in source.records(3)], ["Movie 3"])
+        self.assertEqual(source.already_have, 2)
+        self.assertNotIn("/3/movie/1", fetcher.paths())
+        self.assertNotIn("/3/movie/2", fetcher.paths())
+
+    def test_nothing_is_passed_over_unless_asked(self):
+        routes = {
+            **tmdb_lists("movie", top=[1], popular=[], discover=[]), "/3/movie/1": movie_json(1),
+        }
+        source = MovieSource(FakeFetcher(routes), "abc123")
+        self.assertEqual(len(list(source.records(5))), 1)
+        self.assertEqual(source.already_have, 0)
+
+    def test_tv_skips_what_it_has_too(self):
+        routes = {
+            **tmdb_lists("tv", top=[10, 11], popular=[], discover=[]),
+            "/3/tv/11": {**TV_DETAILS[10], "name": "Eleven"},
+        }
+        fetcher = FakeFetcher(routes)
+        source = TvSource(fetcher, "abc123", known={"tv-10"})
+        self.assertEqual([r.title for r in source.records(5)], ["Eleven"])
+        self.assertNotIn("/3/tv/10", fetcher.paths())
+        self.assertEqual(source.already_have, 1)
+
+    def test_a_movie_id_and_a_tv_id_are_different_things(self):
+        # TMDB numbers movies and shows separately, so id 10 can be both.
+        routes = {**tmdb_lists("tv", top=[10], popular=[], discover=[]), "/3/tv/10": TV_DETAILS[10]}
+        source = TvSource(FakeFetcher(routes), "abc123", known={"movie-10"})
+        self.assertEqual(len(list(source.records(5))), 1)
+        self.assertEqual(source.already_have, 0)
+
+
+class BookResumeTests(TestCase):
+    def test_books_already_imported_are_passed_over_without_a_request(self):
+        fetcher = FakeFetcher(book_routes())
+        source = BookSource(fetcher, known={"OL1W"})
+        titles = [r.title for r in source.records(28)]
+        self.assertEqual(titles, ["The Magic Door"])
+        self.assertEqual(source.already_have, 1)
+        self.assertNotIn("/works/OL1W.json", fetcher.paths())
+
+    def test_a_known_book_still_blocks_its_duplicate_record(self):
+        # OL5W is the same book as OL1W under another id. It must not slip in.
+        source = BookSource(FakeFetcher(book_routes()), known={"OL1W"})
+        self.assertNotIn("dune", [r.title.lower() for r in source.records(28)])
+
+
+class GameResumeTests(TestCase):
+    def source(self, **kwargs):
+        routes = {"/api/games": first_page_only(GAME_ROWS), **GAME_DETAILS}
+        fetcher = FakeFetcher(routes)
+        return GameSource(fetcher, "rawgkey", **kwargs), fetcher
+
+    def test_a_game_already_imported_costs_no_request(self):
+        source, fetcher = self.source(known={"100"})
+        titles = [r.title for r in source.records(10)]
+        self.assertNotIn("Hades", titles)
+        self.assertNotIn("/api/games/100", fetcher.paths())
+        self.assertEqual(source.already_have, 1)
+
+    def test_a_game_the_list_says_has_no_playtime_costs_no_request(self):
+        source, fetcher = self.source()
+        list(source.records(10))
+        self.assertNotIn("/api/games/101", fetcher.paths())  # playtime 0
+        self.assertNotIn("/api/games/102", fetcher.paths())  # 900 hours
+
+    def test_a_row_that_leaves_playtime_out_is_still_looked_up(self):
+        source, fetcher = self.source()
+        list(source.records(10))
+        self.assertIn("/api/games/104", fetcher.paths())
+
+    def test_the_list_is_followed_until_it_stops_answering(self):
+        def pages(params):
+            rows = [{"id": params["page"], "name": "Game", "playtime": 0}]
+            return {"results": rows} if params["page"] <= 7 else None
+
+        fetcher = FakeFetcher({"/api/games": pages})
+        self.assertEqual(list(GameSource(fetcher, "rawgkey").records(100)), [])
+        self.assertEqual(max(p["page"] for _, p, _ in fetcher.calls), 8)
+
+    def test_it_asks_for_no_more_than_a_thousand_pages(self):
+        fetcher = FakeFetcher({"/api/games": lambda p: {"results": [{"id": p["page"], "name": "G", "playtime": 0}]}})
+        list(GameSource(fetcher, "rawgkey").records(10**9))
+        self.assertEqual(max(p["page"] for _, p, _ in fetcher.calls), 1000)
+
+    def test_details_are_fetched_at_the_same_time_here_too(self):
+        barrier = threading.Barrier(3, timeout=3)
+        rows = [{"id": i, "name": f"G{i}", "genres": []} for i in (1, 2, 3)]  # no playtime in the list
+
+        def detail(path, params):
+            barrier.wait()
+            return {"playtime": 5}
+
+        fetcher = FakeFetcher({"/api/games": first_page_only(rows)}, fallback=detail)
+        self.assertEqual(len(list(GameSource(fetcher, "rawgkey").records(10))), 3)
+
+
+class SkipExistingCommandTests(TestCase):
+    def setUp(self):
+        patcher = mock.patch(
+            "planner.management.commands.import_catalog.SOURCES", {"books": FakeBooks}
+        )
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        FakeBooks.last = None
+
+    def run_command(self, *args):
+        out = io.StringIO()
+        call_command("import_catalog", *args, stdout=out)
+        return out.getvalue()
+
+    def test_the_flag_hands_the_source_what_is_already_there(self):
+        self.run_command("--only", "books")
+        self.assertEqual(FakeBooks.last.known, set())  # nothing asked for, nothing handed over
+
+        out = self.run_command("--only", "books", "--skip-existing")
+        self.assertEqual(FakeBooks.last.known, {"1", "2"})
+        self.assertIn("2 already imported, passed over", out)
+
+    def test_only_rows_from_that_source_are_handed_over(self):
+        CatalogItem.objects.create(title="By hand", media_type="book", typical_minutes=1)
+        CatalogItem.objects.create(title="Elsewhere", media_type="book", typical_minutes=1, source="tmdb", source_id="x")
+        CatalogItem.objects.create(title="Ours", media_type="book", typical_minutes=1, source="fake", source_id="9")
+        self.run_command("--only", "books", "--skip-existing")
+        self.assertEqual(FakeBooks.last.known, {"9"})
+
+    def test_repeating_an_interrupted_run_adds_only_what_is_new(self):
+        self.run_command("--only", "books")
+        CatalogItem.objects.filter(source_id="2").delete()   # as if it stopped after the first
+        out = self.run_command("--only", "books", "--skip-existing")
+        self.assertEqual(sorted(CatalogItem.objects.values_list("source_id", flat=True)), ["1", "2"])
+        self.assertIn("1 added", out)
+        self.assertIn("1 already imported", out)
