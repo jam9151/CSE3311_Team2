@@ -30,7 +30,11 @@ TESTING = sys.argv[1:2] == ["test"]
 # On unless told otherwise, so a fresh clone just runs. Production sets it false.
 DEBUG = env_bool("DJANGO_DEBUG", default=True)
 
-_DEV_SECRET_KEY = "django-insecure-development-only-do-not-use-for-real"
+# The value this project always used for development. Keeping it means nobody
+# is logged out, and no email link already sent stops working, when they pull
+# the change that moved the key into the environment. The "django-insecure-"
+# prefix is also what makes production refuse it.
+_DEV_SECRET_KEY = "django-insecure-change-me-in-production"
 SECRET_KEY = os.environ.get("DJANGO_SECRET_KEY", "").strip()
 if not SECRET_KEY:
     if not DEBUG:
