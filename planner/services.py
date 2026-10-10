@@ -15,12 +15,70 @@ from django.utils import timezone
 
 from .models import MIN_USABLE_MINUTES, BacklogItem, MediaType, Suggestion
 
-# How long a rejection keeps counting against an item.
-REJECTION_MEMORY_DAYS = 14
+@dataclass(frozen=True)
+class ScoringWeights:
+    """Every number the suggestion scoring uses, and why it is what it is.
 
-# Taken off an item's score for every sitting of it already planned earlier in
-# the same week, so a week mixes things instead of repeating the top item.
-VARIETY_PENALTY = 15
+    An item's score in a gap is the sum of the bonuses below minus the
+    penalties. The biggest score in a gap wins. The numbers only mean anything
+    next to each other, so each comment says where its number sits in steps of
+    one priority level (per_priority_step). ScoringTradeoffTests pins those
+    relationships, so changing a value here fails a test that names the
+    trade-off you just changed.
+
+    Pass your own ScoringWeights to suggest_for_day or suggest_for_week to try
+    other values without touching the defaults.
+    """
+
+    # The user's own say-so, 1 to 5, so 20 to 100. The biggest single term, and
+    # one level (20) is the unit the other numbers are measured in.
+    per_priority_step: float = 20
+
+    # Finishing what you started beats starting something new. A bit more than
+    # one step: a started priority 3 beats a fresh 4, but a fresh 5 still beats
+    # a started 3.
+    in_progress_bonus: float = 25
+
+    # Multiplied by the share of the gap the sitting uses, so 0 to 30. It fills
+    # a gap well rather than leaving most of it empty. Between one step and two:
+    # a perfect fit can reorder neighbouring priorities but can't lift an item
+    # two levels.
+    gap_fill_bonus: float = 30
+
+    # A film that fits a gap is the best use of a long evening, and the case
+    # the app exists for. A film also always earns finishes_item_bonus, since it
+    # is watched in one go, so a film that fits leads by 35 before gap fill:
+    # one step and a bit more. A priority 2 film beats a priority 3 chapter,
+    # and can edge a priority 4 chapter when it fills the gap better. Lower this
+    # if films win more often than you want.
+    whole_film_bonus: float = 15
+
+    # Being able to finish the item in this sitting. Equal to one step: a done
+    # item is worth about as much as a more wanted one.
+    finishes_item_bonus: float = 20
+
+    # Taken off per time the user said "Not today" inside the memory window.
+    # More than one step and less than two: one no drops a 4 below a fresh 3
+    # but not below a fresh 2, and it is not a hard filter, so the item comes
+    # back once the window passes.
+    rejection_penalty: float = 35
+    rejection_memory_days: int = 14
+
+    # Taken off per sitting of the same item already planned earlier in the
+    # week, so a week mixes titles. Less than one step: a priority buys at
+    # least one repeat before the next item gets a turn, then the next item
+    # starts to catch up.
+    variety_penalty: float = 15
+
+    def __post_init__(self):
+        for name, value in vars(self).items():
+            if value < 0:
+                raise ValueError(f"{name} can't be negative.")
+        if self.rejection_memory_days < 1:
+            raise ValueError("rejection_memory_days must be at least 1.")
+
+
+DEFAULT_WEIGHTS = ScoringWeights()
 
 
 @dataclass(frozen=True)
@@ -143,10 +201,11 @@ def total_free_minutes(user, day, include_planned=True):
     return sum(gap.minutes for gap in free_intervals(user, day, include_planned=include_planned))
 
 
-def recent_rejection_counts(user, on_date=None):
+def recent_rejection_counts(user, on_date=None, memory_days=None):
     """{backlog_item_id: times turned down recently}."""
     on_date = on_date or timezone.localdate()
-    cutoff = on_date - timedelta(days=REJECTION_MEMORY_DAYS)
+    memory_days = DEFAULT_WEIGHTS.rejection_memory_days if memory_days is None else memory_days
+    cutoff = on_date - timedelta(days=memory_days)
     counts = {}
     rows = user.suggestions.filter(status=Suggestion.Status.REJECTED, date__gte=cutoff).values_list(
         "backlog_item_id", flat=True
@@ -156,38 +215,32 @@ def recent_rejection_counts(user, on_date=None):
     return counts
 
 
-def _score(item, gap, rejected_counts, earlier=()):
+def _score(item, gap, rejected_counts, earlier=(), weights=DEFAULT_WEIGHTS):
     """Rank one item against one gap. Higher wins. None means it doesn't fit.
 
     `earlier` is the minutes of each sitting of this item already planned on
-    other days of the week being planned.
+    other days of the week being planned. See ScoringWeights for the numbers.
     """
     remaining = max(0, item.remaining_minutes - sum(earlier))
     minutes = item.session_minutes_for(gap.minutes, remaining=remaining)
     if minutes is None:
         return None
 
-    score = item.priority * 20
+    score = item.priority * weights.per_priority_step
 
-    # Finishing something you started beats starting something new.
     if item.status == BacklogItem.Status.IN_PROGRESS:
-        score += 25
+        score += weights.in_progress_bonus
 
-    # Prefer filling the gap rather than leaving most of it empty.
-    score += (minutes / gap.minutes) * 30
+    score += (minutes / gap.minutes) * weights.gap_fill_bonus
 
-    # A film that only just fits is the best use of a long evening, and it's
-    # the case the whole app exists for, so give it a nudge.
     if not item.rules["chunkable"]:
-        score += 15
+        score += weights.whole_film_bonus
 
     if minutes >= remaining:
-        score += 20
+        score += weights.finishes_item_bonus
 
-    score -= VARIETY_PENALTY * len(earlier)
-
-    # Not a hard filter -- a rejected item should come back eventually.
-    score -= 35 * rejected_counts.get(item.pk, 0)
+    score -= weights.variety_penalty * len(earlier)
+    score -= weights.rejection_penalty * rejected_counts.get(item.pk, 0)
     return score, minutes, remaining
 
 
@@ -200,14 +253,16 @@ def _reason_for(item, gap, minutes, remaining):
     return f"{gap_text} free, so {item.rules['unit']} of this is a comfortable fit."
 
 
-def suggest_for_day(user, day=None, limit=3, persist=True, planned=None):
+def suggest_for_day(user, day=None, limit=3, persist=True, planned=None, weights=None):
     """Pick something for each free gap. One item per gap, no repeats.
 
     `planned` is {backlog_item_id: [minutes, ...]} for sittings already planned
-    on other days. Only suggest_for_week passes it.
+    on other days. Only suggest_for_week passes it. `weights` is a
+    ScoringWeights, the defaults if left out.
     """
     day = day or timezone.localdate()
     planned = planned or {}
+    weights = weights or DEFAULT_WEIGHTS
     gaps = free_intervals(user, day)
     if not gaps:
         return []
@@ -218,7 +273,7 @@ def suggest_for_day(user, day=None, limit=3, persist=True, planned=None):
     if not candidates:
         return []
 
-    rejected_counts = recent_rejection_counts(user, day)
+    rejected_counts = recent_rejection_counts(user, day, weights.rejection_memory_days)
 
     # Don't offer something that's already sitting on the same day. Rejected
     # ones are excluded so a refresh can legitimately bring them back.
@@ -240,7 +295,7 @@ def suggest_for_day(user, day=None, limit=3, persist=True, planned=None):
         for item in candidates:
             if item.pk in used_items:
                 continue
-            scored = _score(item, gap, rejected_counts, planned.get(item.pk, ()))
+            scored = _score(item, gap, rejected_counts, planned.get(item.pk, ()), weights)
             if scored is None:
                 continue
             score, minutes, remaining = scored
@@ -268,7 +323,7 @@ def suggest_for_day(user, day=None, limit=3, persist=True, planned=None):
     return suggestions
 
 
-def suggest_for_week(user, start=None, days=7, per_day=3, persist=True):
+def suggest_for_week(user, start=None, days=7, per_day=3, persist=True, weights=None):
     """Run suggest_for_day over a stretch of days. Returns {date: [suggestions]}.
 
     Days are planned in order and each one is told what the earlier days took.
@@ -291,7 +346,7 @@ def suggest_for_week(user, start=None, days=7, per_day=3, persist=True):
 
     plan = {}
     for day in window:
-        made = suggest_for_day(user, day, limit=per_day, persist=persist, planned=planned)
+        made = suggest_for_day(user, day, limit=per_day, persist=persist, planned=planned, weights=weights)
         for suggestion in made:
             planned.setdefault(suggestion.backlog_item_id, []).append(suggestion.minutes)
         plan[day] = made

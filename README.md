@@ -234,9 +234,50 @@ gets the movie.
 `suggest_for_day()` for each of the next seven days in order and tells each day
 what the earlier ones already took. That is what stops a film being planned
 twice or a book being planned past its last page, and each earlier sitting of
-an item costs it `VARIETY_PENALTY` points so the week isn't the same title
+an item costs it `variety_penalty` points so the week isn't the same title
 seven times. Anything already accepted counts as planned. The new suggestions
 are pending until you add them, one at a time or with "Add all".
+
+### How suggestions are scored
+
+Every number is in one place, `ScoringWeights` in `planner/services.py`, and
+the defaults are `DEFAULT_WEIGHTS`. They only mean anything next to each
+other, so the table says where each one sits in steps of one priority level.
+
+| Weight | Default | What it does, and why that size |
+| --- | --- | --- |
+| `per_priority_step` | 20 | Points per priority level, so 20 to 100. The user's own say-so is the biggest term, and one level is the unit the rest are measured in. |
+| `in_progress_bonus` | 25 | Finishing beats starting. A bit over one step: a started 3 beats a fresh 4, a fresh 5 still beats a started 3. |
+| `gap_fill_bonus` | 30 | Times the share of the gap used. Prefers filling a gap. Between one and two steps, so it reorders neighbours but can't lift an item two levels. |
+| `whole_film_bonus` | 15 | A film that fits is the best use of a long evening. A film also always earns the finishing bonus, so it leads by 35. |
+| `finishes_item_bonus` | 20 | The sitting would finish the item. Exactly one step. |
+| `rejection_penalty` | 35 | Per "Not today" inside the memory window. Over one step, under two: one no drops a 4 below a fresh 3 but not below a fresh 2. |
+| `rejection_memory_days` | 14 | How long a no counts. It is a penalty, not a filter, so the item comes back. |
+| `variety_penalty` | 15 | Per sitting already planned this week. Under one step, so a priority buys one repeat before the next title catches up. |
+
+`ScoringTradeoffTests` in `planner/tests.py` pins each of those relationships
+and `RealisticDaysTests` pins a whole student week. If you change a weight and
+one of them fails, the sentence in the table (and in the code comment above the
+weight) has stopped being true, so fix whichever is wrong.
+
+To try other numbers without touching the defaults, pass your own:
+
+```python
+from dataclasses import replace
+from planner.services import DEFAULT_WEIGHTS, suggest_for_week
+
+gentler = replace(DEFAULT_WEIGHTS, rejection_penalty=10)
+suggest_for_week(user, weights=gentler, persist=False)   # persist=False saves nothing
+```
+
+Two things worth knowing about the defaults:
+
+- A film that fits leads by 35 points, which is more than it sounds. A priority
+  2 film beats a priority 3 chapter, and can edge a priority 4 chapter when it
+  fills the gap better. If films win more often than you want, lower
+  `whole_film_bonus`.
+- A gap gets one suggestion however long it is. A free Saturday with no
+  commitments is one 15 hour gap, so it gets one suggestion.
 
 ## Files
 
@@ -248,7 +289,7 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      226 tests, mostly on the scheduling
+  tests.py      262 tests, mostly on the scheduling
   management/commands/seed_catalog.py
   management/commands/reset_accounts.py
   management/commands/import_catalog.py

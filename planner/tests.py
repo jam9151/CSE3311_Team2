@@ -6,6 +6,8 @@ import smtplib
 import tempfile
 import urllib.error
 import urllib.parse
+from dataclasses import FrozenInstanceError, replace
+from dataclasses import fields as dataclass_fields
 from datetime import date, datetime, time, timedelta
 from email.message import Message
 from pathlib import Path
@@ -40,9 +42,12 @@ from .catalog_import import (
 from .forms import RegisterForm
 from .models import BacklogItem, CatalogItem, Commitment, MediaType, Profile, RecurringBlock, Review, Suggestion
 from .services import (
+    DEFAULT_WEIGHTS,
+    Interval,
+    ScoringWeights,
+    _axis,
     free_intervals,
     humanize_minutes,
-    _axis,
     month_grid,
     progress_stats,
     suggest_for_day,
@@ -50,12 +55,16 @@ from .services import (
     total_free_minutes,
     upcoming_reminders,
 )
+from .services import _score as score_item
 from .verification import TOKEN_MAX_AGE_DAYS
 
 # A Tuesday. Most of these tests pin a fixed date because free_intervals()
 # clips gaps that have already passed when the day is today, which would make
 # the results depend on when you run the suite.
 TEST_DAY = date(2026, 10, 6)
+# A Monday long ago. Week tests start here so no day in the window is today,
+# which free_intervals trims to the current time and would make them flaky.
+WEEK_START = date(2025, 3, 3)
 
 
 def make_user(username="sam", **profile_kwargs):
@@ -587,12 +596,12 @@ class WeekPlanTests(TestCase):
         )
 
     def week(self, **kwargs):
-        return suggest_for_week(self.user, start=TEST_DAY, persist=False, **kwargs)
+        return suggest_for_week(self.user, start=WEEK_START, persist=False, **kwargs)
 
     def test_covers_seven_consecutive_days(self):
         self.add("Big book", MediaType.BOOK, 5000)
         plan = self.week()
-        self.assertEqual(list(plan), [TEST_DAY + timedelta(days=n) for n in range(7)])
+        self.assertEqual(list(plan), [WEEK_START + timedelta(days=n) for n in range(7)])
         self.assertTrue(all(plan[day] for day in plan))
 
     def test_a_film_is_planned_once(self):
@@ -615,26 +624,26 @@ class WeekPlanTests(TestCase):
         self.add("Book A", MediaType.BOOK, 2000)
         self.add("Book B", MediaType.BOOK, 2000)
         plan = self.week()
-        titles = [plan[TEST_DAY + timedelta(days=n)][0].backlog_item.title for n in range(2)]
+        titles = [plan[WEEK_START + timedelta(days=n)][0].backlog_item.title for n in range(2)]
         self.assertEqual(titles, ["Book A", "Book B"])
 
     def test_accepted_sessions_count_as_already_planned(self):
         item = self.add("Short book", MediaType.BOOK, 100)
         Suggestion.objects.create(
-            user=self.user, backlog_item=item, date=TEST_DAY + timedelta(days=3), start_time=time(19),
+            user=self.user, backlog_item=item, date=WEEK_START + timedelta(days=3), start_time=time(19),
             end_time=time(20), minutes=100, status=Suggestion.Status.ACCEPTED,
         )
         self.assertFalse(any(self.week().values()))
 
     def test_days_without_free_time_are_left_empty(self):
         self.add("Big book", MediaType.BOOK, 5000)
-        wednesday = TEST_DAY + timedelta(days=1)
+        wednesday = WEEK_START + timedelta(days=1)
         RecurringBlock.objects.create(
             user=self.user, label="Away", weekday=wednesday.weekday(), start_time=time(8), end_time=time(23)
         )
         plan = self.week()
         self.assertEqual(plan[wednesday], [])
-        self.assertTrue(plan[TEST_DAY])
+        self.assertTrue(plan[WEEK_START])
 
     def test_persist_false_writes_nothing(self):
         self.add("Big book", MediaType.BOOK, 5000)
@@ -643,12 +652,12 @@ class WeekPlanTests(TestCase):
 
     def test_persist_true_saves_every_suggestion(self):
         self.add("Big book", MediaType.BOOK, 5000)
-        plan = suggest_for_week(self.user, start=TEST_DAY)
+        plan = suggest_for_week(self.user, start=WEEK_START)
         self.assertEqual(Suggestion.objects.count(), sum(len(day) for day in plan.values()))
 
     def test_single_day_behaviour_is_unchanged(self):
         self.add("Big book", MediaType.BOOK, 5000)
-        self.assertEqual(len(suggest_for_day(self.user, TEST_DAY, persist=False)), 1)
+        self.assertEqual(len(suggest_for_day(self.user, WEEK_START, persist=False)), 1)
 
 
 class WeekViewTests(TestCase):
@@ -2015,3 +2024,315 @@ class ProgressViewTests(TestCase):
     def test_unverified_users_are_held_back_like_everywhere_else(self):
         self.client.force_login(make_user("newbie", email_verified=False))
         self.assertRedirects(self.client.get("/progress/"), "/verify/", fetch_redirect_response=False)
+
+
+# ---------------------------------------------------------------- scoring
+
+# Far in the past, so free_intervals never trims a day to "right now".
+SCENARIO_TUESDAY = date(2025, 3, 4)
+SCENARIO_SATURDAY = date(2025, 3, 8)
+
+
+def only(**weights):
+    """ScoringWeights with every number zero except the ones given."""
+    zero = {f.name: 0 for f in dataclass_fields(ScoringWeights) if f.name != "rejection_memory_days"}
+    return ScoringWeights(**{**zero, **weights})
+
+
+FOUR_HOURS = Interval(time(18), time(22))
+
+
+def a_book(priority=3, estimated=5000, completed=0, status=BacklogItem.Status.BACKLOG):
+    return BacklogItem(
+        title="A book", media_type=MediaType.BOOK, priority=priority, estimated_minutes=estimated,
+        minutes_completed=completed, status=status,
+    )
+
+
+def a_film(priority=3, minutes=120):
+    return BacklogItem(title="A film", media_type=MediaType.MOVIE, priority=priority, estimated_minutes=minutes)
+
+
+def score_of(item, gap=FOUR_HOURS, rejected=0, earlier=(), weights=DEFAULT_WEIGHTS):
+    """Just the score. Unsaved items have pk None, which is what the rejection lookup keys on."""
+    return score_item(item, gap, {item.pk: rejected} if rejected else {}, earlier, weights)[0]
+
+
+class ScoringWeightsTests(TestCase):
+    """Each number does what its name says, checked with every other number set to zero."""
+
+    def test_every_weight_at_zero_scores_nothing(self):
+        self.assertEqual(score_of(a_book(priority=5), weights=only()), 0)
+
+    def test_priority_is_worth_a_step_per_level(self):
+        self.assertEqual(score_of(a_book(priority=4), weights=only(per_priority_step=7)), 28)
+        self.assertEqual(score_of(a_book(priority=1), weights=only(per_priority_step=7)), 7)
+
+    def test_a_started_item_gets_the_in_progress_bonus(self):
+        started = a_book(status=BacklogItem.Status.IN_PROGRESS)
+        self.assertEqual(score_of(started, weights=only(in_progress_bonus=9)), 9)
+        self.assertEqual(score_of(a_book(), weights=only(in_progress_bonus=9)), 0)
+
+    def test_gap_fill_is_scaled_by_the_share_of_the_gap_used(self):
+        # A book takes 75 minutes of a 240 minute gap, a 120 minute film half of it.
+        self.assertEqual(score_of(a_book(), weights=only(gap_fill_bonus=40)), 75 / 240 * 40)
+        self.assertEqual(score_of(a_film(), weights=only(gap_fill_bonus=40)), 20)
+
+    def test_only_a_film_gets_the_film_bonus(self):
+        self.assertEqual(score_of(a_film(), weights=only(whole_film_bonus=11)), 11)
+        self.assertEqual(score_of(a_book(), weights=only(whole_film_bonus=11)), 0)
+
+    def test_finishing_bonus_goes_to_whatever_the_sitting_would_finish(self):
+        last_hour = a_book(estimated=100, completed=40)  # 60 left, fits in one sitting
+        self.assertEqual(score_of(last_hour, weights=only(finishes_item_bonus=13)), 13)
+        self.assertEqual(score_of(a_book(), weights=only(finishes_item_bonus=13)), 0)
+        self.assertEqual(score_of(a_film(), weights=only(finishes_item_bonus=13)), 13)
+
+    def test_variety_penalty_is_per_earlier_sitting(self):
+        weights = only(variety_penalty=6)
+        self.assertEqual(score_of(a_book(), earlier=(), weights=weights), 0)
+        self.assertEqual(score_of(a_book(), earlier=(75,), weights=weights), -6)
+        self.assertEqual(score_of(a_book(), earlier=(75, 75, 75), weights=weights), -18)
+
+    def test_rejection_penalty_is_per_rejection(self):
+        self.assertEqual(score_of(a_book(), rejected=3, weights=only(rejection_penalty=8)), -24)
+
+    def test_an_item_that_does_not_fit_has_no_score_at_all(self):
+        self.assertIsNone(score_item(a_film(minutes=300), FOUR_HOURS, {}))
+
+    def test_earlier_sittings_use_up_what_is_left_to_plan(self):
+        # 100 minutes left, 75 already planned, so 25 left, which finishes it.
+        nearly_done = a_book(estimated=100)
+        _, minutes, remaining = score_item(nearly_done, FOUR_HOURS, {}, earlier=(75,))
+        self.assertEqual((minutes, remaining), (25, 25))
+
+
+class ScoringWeightsValidationTests(TestCase):
+    def test_the_defaults_are_the_numbers_the_app_shipped_with(self):
+        self.assertEqual(
+            (
+                DEFAULT_WEIGHTS.per_priority_step, DEFAULT_WEIGHTS.in_progress_bonus,
+                DEFAULT_WEIGHTS.gap_fill_bonus, DEFAULT_WEIGHTS.whole_film_bonus,
+                DEFAULT_WEIGHTS.finishes_item_bonus, DEFAULT_WEIGHTS.rejection_penalty,
+                DEFAULT_WEIGHTS.variety_penalty, DEFAULT_WEIGHTS.rejection_memory_days,
+            ),
+            (20, 25, 30, 15, 20, 35, 15, 14),
+        )
+
+    def test_negative_numbers_are_refused_by_name(self):
+        with self.assertRaisesMessage(ValueError, "rejection_penalty"):
+            ScoringWeights(rejection_penalty=-1)
+
+    def test_the_memory_window_must_be_at_least_a_day(self):
+        with self.assertRaises(ValueError):
+            ScoringWeights(rejection_memory_days=0)
+
+    def test_weights_cannot_be_changed_after_the_fact(self):
+        with self.assertRaises(FrozenInstanceError):
+            DEFAULT_WEIGHTS.per_priority_step = 99
+
+    def test_a_variant_is_made_with_replace_and_leaves_the_defaults_alone(self):
+        gentler = replace(DEFAULT_WEIGHTS, rejection_penalty=10)
+        self.assertEqual((gentler.rejection_penalty, gentler.per_priority_step), (10, 20))
+        self.assertEqual(DEFAULT_WEIGHTS.rejection_penalty, 35)
+
+
+class ScoringTradeoffTests(TestCase):
+    """The relationships the numbers are chosen to produce, as written in ScoringWeights.
+
+    If one of these fails after you change a weight, the comment on that weight
+    is no longer true. Either the change was a mistake or the comment needs
+    rewriting, and so does the README table.
+    """
+
+    w = DEFAULT_WEIGHTS
+
+    def test_the_comments_describe_the_numbers_in_steps(self):
+        step = self.w.per_priority_step
+        self.assertGreater(self.w.in_progress_bonus, step)
+        self.assertLess(self.w.in_progress_bonus, 2 * step)
+        self.assertGreater(self.w.gap_fill_bonus, step)
+        self.assertLess(self.w.gap_fill_bonus, 2 * step)
+        self.assertEqual(self.w.finishes_item_bonus, step)
+        self.assertGreater(self.w.rejection_penalty, step)
+        self.assertLess(self.w.rejection_penalty, 2 * step)
+        self.assertLess(self.w.variety_penalty, step)
+        # A film's real lead is the film bonus plus the finishing bonus it always earns.
+        self.assertGreater(self.w.whole_film_bonus + self.w.finishes_item_bonus, step)
+        self.assertLess(self.w.whole_film_bonus + self.w.finishes_item_bonus, 2 * step)
+
+    def test_a_started_item_beats_a_fresh_one_a_step_higher_but_not_two(self):
+        started = a_book(3, status=BacklogItem.Status.IN_PROGRESS)
+        self.assertGreater(score_of(started), score_of(a_book(4)))
+        self.assertLess(score_of(started), score_of(a_book(5)))
+
+    def test_one_no_drops_an_item_below_a_fresh_one_a_step_lower_but_not_two(self):
+        self.assertLess(score_of(a_book(4), rejected=1), score_of(a_book(3)))
+        self.assertGreater(score_of(a_book(4), rejected=1), score_of(a_book(2)))
+
+    def test_a_second_no_drops_it_further(self):
+        self.assertLess(score_of(a_book(4), rejected=2), score_of(a_book(2)))
+
+    def test_a_repeat_costs_less_than_a_step_so_priority_buys_one_before_the_next_gets_a_turn(self):
+        self.assertGreater(score_of(a_book(4), earlier=(75,)), score_of(a_book(3)))
+        self.assertLess(score_of(a_book(4), earlier=(75, 75)), score_of(a_book(3)))
+
+    def test_finishing_is_worth_exactly_a_step(self):
+        last_sitting = a_book(estimated=75)   # 75 left, the sitting finishes it
+        long_way_to_go = a_book(estimated=5000)  # same 75 minutes, doesn't
+        self.assertEqual(score_of(last_sitting) - score_of(long_way_to_go), self.w.per_priority_step)
+
+    def test_a_film_that_fits_beats_a_chapter_one_priority_higher(self):
+        self.assertGreater(score_of(a_film(2)), score_of(a_book(3)))
+
+    def test_a_film_is_not_rescued_by_the_bonus_when_it_is_far_less_wanted(self):
+        self.assertLess(score_of(a_film(1)), score_of(a_book(4)))
+
+    def test_a_film_can_edge_a_chapter_two_priorities_higher_in_a_gap_it_fills(self):
+        # Worth knowing about: films' combined 35 point lead plus a better fill
+        # beats a book two levels up. If that is more than you want, lower
+        # whole_film_bonus and update this test and the README.
+        self.assertGreater(score_of(a_film(2)), score_of(a_book(4)))
+
+    def test_a_film_that_does_not_fit_is_not_in_the_running(self):
+        self.assertIsNone(score_item(a_film(5, minutes=300), FOUR_HOURS, {}))
+
+
+class RealisticDaysTests(TestCase):
+    """The whole scheduler on a believable student's week, pinned.
+
+    These are the outputs the app gives today and that look right. They are
+    meant to change on purpose, when someone retunes the weights.
+    """
+
+    def setUp(self):
+        self.user = make_user("alex")
+        for label, start, end in [
+            ("Lecture", time(11), time(12, 20)), ("Lecture", time(13), time(14, 20)), ("Shift", time(17), time(20)),
+        ]:
+            RecurringBlock.objects.create(
+                user=self.user, label=label, weekday=SCENARIO_TUESDAY.weekday(), start_time=start, end_time=end
+            )
+
+    def add(self, title, media_type, total, priority, done=0, status=BacklogItem.Status.BACKLOG):
+        return BacklogItem.objects.create(
+            user=self.user, title=title, media_type=media_type, estimated_minutes=total, priority=priority,
+            minutes_completed=done, status=status,
+        )
+
+    def student_backlog(self):
+        return {
+            "phm": self.add("Project Hail Mary", MediaType.BOOK, 640, 5, done=180, status=BacklogItem.Status.IN_PROGRESS),
+            "dune": self.add("Dune", MediaType.MOVIE, 155, 4),
+            "hades": self.add("Hades", MediaType.GAME, 1200, 3),
+            "severance": self.add("Severance", MediaType.TV, 1080, 3),
+            "arrival": self.add("Arrival", MediaType.MOVIE, 116, 2),
+            "educated": self.add("Educated", MediaType.BOOK, 580, 2),
+        }
+
+    def plan(self, day, **kwargs):
+        made = suggest_for_day(self.user, day, persist=False, **kwargs)
+        return [(s.backlog_item.title, s.start_time, s.end_time, s.minutes) for s in sorted(made, key=lambda s: s.start_time)]
+
+    def reject(self, item, days_before, day=SCENARIO_TUESDAY):
+        Suggestion.objects.create(
+            user=self.user, backlog_item=item, date=day - timedelta(days=days_before), start_time=time(19),
+            end_time=time(20), minutes=60, status=Suggestion.Status.REJECTED,
+        )
+
+    def test_a_tuesday_between_lectures_and_a_shift(self):
+        self.student_backlog()
+        # Gaps: 8-11, 12:20-1, 2:20-5 and 8-11pm. The biggest three get something.
+        self.assertEqual(
+            self.plan(SCENARIO_TUESDAY),
+            [
+                ("Dune", time(8), time(10, 35), 155),              # the long morning gap fits the film
+                ("Arrival", time(14, 20), time(16, 16), 116),      # the afternoon gap fits the shorter one
+                ("Project Hail Mary", time(20), time(21, 15), 75),  # evening: a few chapters of the started book
+            ],
+        )
+
+    def test_one_no_does_not_dethrone_a_started_priority_five_book_but_two_do(self):
+        items = self.student_backlog()
+        self.reject(items["phm"], 1)
+        self.assertIn("Project Hail Mary", [t for t, *_ in self.plan(SCENARIO_TUESDAY)])
+
+        self.reject(items["phm"], 2)
+        titles = [t for t, *_ in self.plan(SCENARIO_TUESDAY)]
+        self.assertNotIn("Project Hail Mary", titles)
+        self.assertEqual(titles, ["Dune", "Severance", "Arrival"])
+
+    def test_a_no_is_forgotten_after_the_memory_window(self):
+        items = self.student_backlog()
+        self.reject(items["phm"], 1)
+        self.reject(items["phm"], 2)
+        in_three_weeks = SCENARIO_TUESDAY + timedelta(days=21)
+        self.assertIn("Project Hail Mary", [t for t, *_ in self.plan(in_three_weeks)])
+
+    def test_a_free_saturday_gets_the_film_when_priorities_are_level(self):
+        self.add("Dune", MediaType.MOVIE, 155, 3)
+        self.add("Educated", MediaType.BOOK, 580, 3)
+        self.assertEqual(self.plan(SCENARIO_SATURDAY), [("Dune", time(8), time(10, 35), 155)])
+
+    def test_a_started_priority_five_book_beats_the_film_on_a_free_saturday(self):
+        self.student_backlog()
+        # One big gap means one suggestion today, however long the gap is.
+        self.assertEqual(self.plan(SCENARIO_SATURDAY), [("Project Hail Mary", time(8), time(9, 15), 75)])
+
+    def test_a_week_mixes_titles_in_proportion_to_priority(self):
+        # A clear week, so every day is one big gap and one suggestion.
+        RecurringBlock.objects.all().delete()
+        BacklogItem.objects.all().delete()
+        self.add("A", MediaType.BOOK, 5000, 4)
+        self.add("B", MediaType.BOOK, 5000, 3)
+        plan = suggest_for_week(self.user, start=WEEK_START, persist=False)
+        self.assertEqual(
+            [day[0].backlog_item.title for day in plan.values()], ["A", "A", "B", "A", "B", "A", "B"]
+        )
+
+
+class ScoringOverrideTests(TestCase):
+    """Other weights reach the real suggestions, and the defaults stay untouched."""
+
+    def setUp(self):
+        self.user = make_user()
+        self.first = BacklogItem.objects.create(
+            user=self.user, title="First", media_type=MediaType.BOOK, estimated_minutes=5000, priority=3
+        )
+        self.second = BacklogItem.objects.create(
+            user=self.user, title="Second", media_type=MediaType.BOOK, estimated_minutes=5000, priority=3
+        )
+
+    def pick(self, **kwargs):
+        return suggest_for_day(self.user, TEST_DAY, persist=False, **kwargs)[0].backlog_item.title
+
+    def reject_first(self, days_before=1):
+        Suggestion.objects.create(
+            user=self.user, backlog_item=self.first, date=TEST_DAY - timedelta(days=days_before),
+            start_time=time(19), end_time=time(20), minutes=60, status=Suggestion.Status.REJECTED,
+        )
+
+    def test_a_tie_goes_to_the_older_item(self):
+        self.assertEqual(self.pick(), "First")
+
+    def test_the_default_demotes_a_rejected_item(self):
+        self.reject_first()
+        self.assertEqual(self.pick(), "Second")
+
+    def test_a_zero_rejection_penalty_ignores_the_no(self):
+        self.reject_first()
+        self.assertEqual(self.pick(weights=replace(DEFAULT_WEIGHTS, rejection_penalty=0)), "First")
+
+    def test_a_shorter_memory_forgets_an_older_no(self):
+        self.reject_first(days_before=5)
+        self.assertEqual(self.pick(), "Second")
+        self.assertEqual(self.pick(weights=replace(DEFAULT_WEIGHTS, rejection_memory_days=3)), "First")
+
+    def test_the_week_planner_uses_the_weights_too(self):
+        BacklogItem.objects.all().delete()
+        BacklogItem.objects.create(user=self.user, title="A", media_type=MediaType.BOOK, estimated_minutes=5000, priority=4)
+        BacklogItem.objects.create(user=self.user, title="B", media_type=MediaType.BOOK, estimated_minutes=5000, priority=3)
+        plan = suggest_for_week(
+            self.user, start=WEEK_START, persist=False, weights=replace(DEFAULT_WEIGHTS, variety_penalty=0)
+        )
+        self.assertEqual({day[0].backlog_item.title for day in plan.values()}, {"A"})
