@@ -109,6 +109,17 @@ $env:DEFAULT_FROM_EMAIL = "MediaFlow <noreply@example.com>"
 `EMAIL_PORT` (587) and `EMAIL_USE_TLS` (true) have defaults. To confirm
 someone by hand, tick `email_verified` on their profile in the admin.
 
+To test sign-up over and over, wipe the accounts between tries:
+
+```powershell
+python manage.py reset_accounts
+```
+
+It lists who it will delete, asks you to type `yes`, and removes those accounts
+along with their backlogs and schedules. Staff accounts and the catalog are
+kept. Add `--keep-demo` to spare the demo account, `--yes` to skip the prompt,
+or `--include-staff` to remove admins too. It refuses to run with `DEBUG` off.
+
 ## Reminders
 
 Turn them on from the Reminders card on My week and pick how many minutes of
@@ -163,8 +174,9 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      104 tests, mostly on the scheduling
+  tests.py      113 tests, mostly on the scheduling
   management/commands/seed_catalog.py
+  management/commands/reset_accounts.py
 templates/
 static/js/reminders.js   polls for upcoming sessions and shows notifications
 static/src/app.css   Tailwind source (edit this)

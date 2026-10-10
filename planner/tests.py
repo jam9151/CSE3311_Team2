@@ -7,7 +7,8 @@ from unittest import mock
 from django.contrib.auth import get_user_model
 from django.core import mail, signing
 from django.core.management import call_command
-from django.test import TestCase
+from django.core.management.base import CommandError
+from django.test import TestCase, override_settings
 from django.utils import timezone
 
 from .forms import RegisterForm
@@ -950,3 +951,72 @@ class NavVisibilityTests(TestCase):
         admin = get_user_model().objects.create_superuser("boss", "boss@example.com", "pw")
         self.client.force_login(admin)
         self.assertContains(self.client.get("/dashboard/"), 'href="/calendar/"')
+
+
+@override_settings(DEBUG=True)
+class ResetAccountsTests(TestCase):
+    def setUp(self):
+        self.student = make_user("student")
+        self.demo = make_user("demo")
+        self.admin = get_user_model().objects.create_superuser("boss", "boss@example.com", "pw")
+        BacklogItem.objects.create(user=self.student, title="Dune", media_type=MediaType.BOOK, estimated_minutes=600)
+        CatalogItem.objects.create(title="Shared film", media_type=MediaType.MOVIE, typical_minutes=100)
+
+    def run_command(self, *args):
+        out = io.StringIO()
+        call_command("reset_accounts", *args, stdout=out)
+        return out.getvalue()
+
+    def usernames(self):
+        return set(get_user_model().objects.values_list("username", flat=True))
+
+    def test_deletes_students_and_their_data_but_keeps_staff_and_catalog(self):
+        self.run_command("--yes")
+        self.assertEqual(self.usernames(), {"boss"})
+        self.assertEqual(BacklogItem.objects.count(), 0)
+        self.assertEqual(Profile.objects.count(), 0)
+        self.assertEqual(CatalogItem.objects.count(), 1)
+
+    def test_keep_demo(self):
+        self.run_command("--yes", "--keep-demo")
+        self.assertEqual(self.usernames(), {"demo", "boss"})
+
+    def test_include_staff(self):
+        self.run_command("--yes", "--include-staff")
+        self.assertEqual(self.usernames(), set())
+
+    def test_the_same_address_can_register_again_afterwards(self):
+        self.run_command("--yes")
+        response = self.client.post(
+            "/register/",
+            {"username": "student", "email": "student@mavs.uta.edu",
+             "password1": "sturdy-passphrase-1", "password2": "sturdy-passphrase-1"},
+        )
+        self.assertRedirects(response, "/verify/")
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_asks_first_and_stops_unless_told_yes(self):
+        with mock.patch("builtins.input", return_value="no"):
+            output = self.run_command()
+        self.assertIn("Nothing deleted", output)
+        self.assertEqual(self.usernames(), {"student", "demo", "boss"})
+
+    def test_continues_when_told_yes_at_the_prompt(self):
+        with mock.patch("builtins.input", return_value="yes"):
+            self.run_command()
+        self.assertEqual(self.usernames(), {"boss"})
+
+    def test_lists_what_it_will_delete(self):
+        output = self.run_command("--yes")
+        self.assertIn("student  student@mavs.uta.edu", output)
+        self.assertNotIn("boss", output)
+
+    def test_nothing_to_do(self):
+        self.run_command("--yes", "--include-staff")
+        self.assertIn("No accounts to delete", self.run_command("--yes"))
+
+    @override_settings(DEBUG=False)
+    def test_refuses_when_debug_is_off(self):
+        with self.assertRaises(CommandError):
+            self.run_command("--yes")
+        self.assertEqual(self.usernames(), {"student", "demo", "boss"})
