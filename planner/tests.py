@@ -11,6 +11,7 @@ from .services import (
     humanize_minutes,
     month_grid,
     suggest_for_day,
+    suggest_for_week,
     total_free_minutes,
     upcoming_reminders,
 )
@@ -531,3 +532,195 @@ class ReminderViewTests(TestCase):
         self.client.post("/schedule/", {"save_notifications": "1", "notify_lead_minutes": "15"})
         self.user.profile.refresh_from_db()
         self.assertFalse(self.user.profile.notify_enabled)
+
+
+class WeekPlanTests(TestCase):
+    """suggest_for_week on a fixed week, so results don't depend on the clock."""
+
+    def setUp(self):
+        self.user = make_user()
+
+    def add(self, title, media_type, minutes, priority=3, **kwargs):
+        return BacklogItem.objects.create(
+            user=self.user, title=title, media_type=media_type,
+            estimated_minutes=minutes, priority=priority, **kwargs
+        )
+
+    def week(self, **kwargs):
+        return suggest_for_week(self.user, start=TEST_DAY, persist=False, **kwargs)
+
+    def test_covers_seven_consecutive_days(self):
+        self.add("Big book", MediaType.BOOK, 5000)
+        plan = self.week()
+        self.assertEqual(list(plan), [TEST_DAY + timedelta(days=n) for n in range(7)])
+        self.assertTrue(all(plan[day] for day in plan))
+
+    def test_a_film_is_planned_once(self):
+        self.add("Long film", MediaType.MOVIE, 150)
+        planned = [s for day in self.week().values() for s in day]
+        self.assertEqual([s.backlog_item.title for s in planned], ["Long film"])
+
+    def test_never_plans_more_than_what_is_left(self):
+        self.add("Short book", MediaType.BOOK, 100)
+        planned = [s for day in self.week().values() for s in day]
+        # 75 minutes, then the last 25 to finish it. Then nothing.
+        self.assertEqual([s.minutes for s in planned], [75, 25])
+
+    def test_progress_already_made_is_respected(self):
+        self.add("Nearly done", MediaType.BOOK, 100, minutes_completed=80)
+        planned = [s for day in self.week().values() for s in day]
+        self.assertEqual([s.minutes for s in planned], [20])
+
+    def test_later_days_prefer_something_different(self):
+        self.add("Book A", MediaType.BOOK, 2000)
+        self.add("Book B", MediaType.BOOK, 2000)
+        plan = self.week()
+        titles = [plan[TEST_DAY + timedelta(days=n)][0].backlog_item.title for n in range(2)]
+        self.assertEqual(titles, ["Book A", "Book B"])
+
+    def test_accepted_sessions_count_as_already_planned(self):
+        item = self.add("Short book", MediaType.BOOK, 100)
+        Suggestion.objects.create(
+            user=self.user, backlog_item=item, date=TEST_DAY + timedelta(days=3), start_time=time(19),
+            end_time=time(20), minutes=100, status=Suggestion.Status.ACCEPTED,
+        )
+        self.assertFalse(any(self.week().values()))
+
+    def test_days_without_free_time_are_left_empty(self):
+        self.add("Big book", MediaType.BOOK, 5000)
+        wednesday = TEST_DAY + timedelta(days=1)
+        RecurringBlock.objects.create(
+            user=self.user, label="Away", weekday=wednesday.weekday(), start_time=time(8), end_time=time(23)
+        )
+        plan = self.week()
+        self.assertEqual(plan[wednesday], [])
+        self.assertTrue(plan[TEST_DAY])
+
+    def test_persist_false_writes_nothing(self):
+        self.add("Big book", MediaType.BOOK, 5000)
+        self.week()
+        self.assertEqual(Suggestion.objects.count(), 0)
+
+    def test_persist_true_saves_every_suggestion(self):
+        self.add("Big book", MediaType.BOOK, 5000)
+        plan = suggest_for_week(self.user, start=TEST_DAY)
+        self.assertEqual(Suggestion.objects.count(), sum(len(day) for day in plan.values()))
+
+    def test_single_day_behaviour_is_unchanged(self):
+        self.add("Big book", MediaType.BOOK, 5000)
+        self.assertEqual(len(suggest_for_day(self.user, TEST_DAY, persist=False)), 1)
+
+
+class WeekViewTests(TestCase):
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+        self.today = timezone.localdate()
+        self.book = BacklogItem.objects.create(
+            user=self.user, title="Dune", media_type=MediaType.BOOK, estimated_minutes=5000
+        )
+
+    def pending(self):
+        return Suggestion.objects.filter(user=self.user, status=Suggestion.Status.PENDING)
+
+    def messages_after(self, url):
+        response = self.client.post(url, follow=True)
+        return [str(m) for m in response.context["messages"]]
+
+    def test_plan_week_creates_pending_suggestions_in_the_window(self):
+        self.assertRedirects(self.client.post("/suggestions/plan-week/"), "/schedule/")
+        self.assertGreater(self.pending().count(), 0)
+        for suggestion in self.pending():
+            self.assertGreaterEqual(suggestion.date, self.today)
+            self.assertLessEqual(suggestion.date, self.today + timedelta(days=6))
+
+    def test_plan_week_replaces_old_pending_but_keeps_accepted_and_rejected(self):
+        def make(day, status):
+            return Suggestion.objects.create(
+                user=self.user, backlog_item=self.book, date=self.today + timedelta(days=day),
+                start_time=time(8), end_time=time(9), minutes=60, status=status,
+            )
+        stale = make(2, Suggestion.Status.PENDING)
+        accepted = make(3, Suggestion.Status.ACCEPTED)
+        rejected = make(1, Suggestion.Status.REJECTED)
+
+        self.client.post("/suggestions/plan-week/")
+        self.assertFalse(Suggestion.objects.filter(pk=stale.pk).exists())
+        self.assertTrue(Suggestion.objects.filter(pk=accepted.pk).exists())
+        self.assertTrue(Suggestion.objects.filter(pk=rejected.pk).exists())
+
+    def test_plan_week_leaves_other_users_alone(self):
+        other = make_user("mallory")
+        item = BacklogItem.objects.create(user=other, title="Theirs", media_type=MediaType.BOOK, estimated_minutes=500)
+        theirs = Suggestion.objects.create(
+            user=other, backlog_item=item, date=self.today + timedelta(days=1),
+            start_time=time(8), end_time=time(9), minutes=60,
+        )
+        self.client.post("/suggestions/plan-week/")
+        self.assertTrue(Suggestion.objects.filter(pk=theirs.pk, status=Suggestion.Status.PENDING).exists())
+
+    def test_plan_week_is_post_only_and_needs_login(self):
+        self.assertEqual(self.client.get("/suggestions/plan-week/").status_code, 405)
+        self.client.logout()
+        self.assertRedirects(
+            self.client.post("/suggestions/plan-week/"), "/accounts/login/?next=/suggestions/plan-week/"
+        )
+
+    def test_plan_week_says_when_the_backlog_is_empty(self):
+        self.book.delete()
+        self.assertIn("Add something to your backlog first", " ".join(self.messages_after("/suggestions/plan-week/")))
+
+    def test_plan_week_says_when_there_is_no_free_time(self):
+        self.user.profile.day_start, self.user.profile.day_end = time(22, 45), time(23)
+        self.user.profile.save()
+        self.assertIn("No usable free time", " ".join(self.messages_after("/suggestions/plan-week/")))
+
+    def test_plan_week_says_when_nothing_fits(self):
+        self.book.delete()
+        BacklogItem.objects.create(user=self.user, title="Epic", media_type=MediaType.MOVIE, estimated_minutes=1200)
+        self.assertIn("Nothing in your backlog fits", " ".join(self.messages_after("/suggestions/plan-week/")))
+
+    def test_schedule_page_shows_the_plan_and_the_buttons(self):
+        self.client.post("/suggestions/plan-week/")
+        response = self.client.get("/schedule/")
+        self.assertContains(response, "Plan my week")
+        self.assertContains(response, "Dune")
+        self.assertContains(response, f"Add all {self.pending().count()} to calendar")
+
+    def test_schedule_page_hides_add_all_when_nothing_is_pending(self):
+        self.assertNotContains(self.client.get("/schedule/"), "to calendar")
+
+    def test_accept_week_accepts_everything_pending(self):
+        self.client.post("/suggestions/plan-week/")
+        waiting = self.pending().count()
+        self.assertGreater(waiting, 0)
+
+        self.assertRedirects(self.client.post("/suggestions/accept-week/"), "/schedule/")
+        self.assertEqual(self.pending().count(), 0)
+        self.assertEqual(Suggestion.objects.filter(status=Suggestion.Status.ACCEPTED).count(), waiting)
+        self.book.refresh_from_db()
+        self.assertEqual(self.book.status, BacklogItem.Status.IN_PROGRESS)
+        self.assertTrue(all(s.responded_at for s in Suggestion.objects.all()))
+
+    def test_accept_week_ignores_other_users_and_later_weeks(self):
+        other = make_user("mallory")
+        item = BacklogItem.objects.create(user=other, title="Theirs", media_type=MediaType.BOOK, estimated_minutes=500)
+        theirs = Suggestion.objects.create(
+            user=other, backlog_item=item, date=self.today + timedelta(days=1),
+            start_time=time(8), end_time=time(9), minutes=60,
+        )
+        later = Suggestion.objects.create(
+            user=self.user, backlog_item=self.book, date=self.today + timedelta(days=9),
+            start_time=time(8), end_time=time(9), minutes=60,
+        )
+        self.client.post("/suggestions/accept-week/")
+        theirs.refresh_from_db()
+        later.refresh_from_db()
+        self.assertEqual(theirs.status, Suggestion.Status.PENDING)
+        self.assertEqual(later.status, Suggestion.Status.PENDING)
+
+    def test_accept_week_with_nothing_pending(self):
+        self.assertIn("Nothing waiting", " ".join(self.messages_after("/suggestions/accept-week/")))
+
+    def test_accept_week_is_post_only(self):
+        self.assertEqual(self.client.get("/suggestions/accept-week/").status_code, 405)

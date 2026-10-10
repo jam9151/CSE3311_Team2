@@ -27,6 +27,7 @@ from .services import (
     humanize_minutes,
     month_grid,
     suggest_for_day,
+    suggest_for_week,
     total_free_minutes,
     upcoming_reminders,
 )
@@ -112,16 +113,71 @@ def refresh_suggestions(request):
     return redirect(request.POST.get("next") or "dashboard")
 
 
+def _mark_accepted(suggestion):
+    """Status change for an accepted suggestion. The caller saves the suggestion."""
+    suggestion.status = Suggestion.Status.ACCEPTED
+    if suggestion.backlog_item.status == BacklogItem.Status.BACKLOG:
+        suggestion.backlog_item.status = BacklogItem.Status.IN_PROGRESS
+        suggestion.backlog_item.save(update_fields=["status"])
+
+
+@login_required
+@require_POST
+def plan_week(request):
+    """Replace the pending suggestions for the next seven days with a fresh plan."""
+    start = timezone.localdate()
+    end = start + timedelta(days=6)
+    request.user.suggestions.filter(date__range=(start, end), status=Suggestion.Status.PENDING).delete()
+    plan = suggest_for_week(request.user, start)
+
+    created = sum(len(day) for day in plan.values())
+    days_covered = sum(1 for day in plan.values() if day)
+
+    # Same three causes as a single day, so say which one it was.
+    if created:
+        messages.success(
+            request,
+            f"Planned {created} session{'s' if created != 1 else ''} across {days_covered} "
+            f"day{'s' if days_covered != 1 else ''}. Add the ones you like to your calendar.",
+        )
+    elif not request.user.backlog_items.exclude(status=BacklogItem.Status.COMPLETED).exists():
+        messages.info(request, "Add something to your backlog first, then we can plan around it.")
+    elif not any(free_intervals(request.user, day) for day in plan):
+        messages.info(request, "No usable free time in the next seven days.")
+    else:
+        messages.info(request, "Nothing in your backlog fits the gaps you have this week.")
+    return redirect("weekly_schedule")
+
+
+@login_required
+@require_POST
+def accept_week(request):
+    """Add every pending suggestion in the next seven days to the calendar."""
+    start = timezone.localdate()
+    pending = request.user.suggestions.filter(
+        date__range=(start, start + timedelta(days=6)), status=Suggestion.Status.PENDING
+    ).select_related("backlog_item")
+    now = timezone.now()
+    count = 0
+    for suggestion in pending:
+        _mark_accepted(suggestion)
+        suggestion.responded_at = now
+        suggestion.save(update_fields=["status", "responded_at"])
+        count += 1
+    if count:
+        messages.success(request, f"Added {count} session{'s' if count != 1 else ''} to your calendar.")
+    else:
+        messages.info(request, "Nothing waiting to be added.")
+    return redirect("weekly_schedule")
+
+
 @login_required
 @require_POST
 def respond_to_suggestion(request, pk, action):
     suggestion = get_object_or_404(Suggestion, pk=pk, user=request.user)
 
     if action == "accept":
-        suggestion.status = Suggestion.Status.ACCEPTED
-        if suggestion.backlog_item.status == BacklogItem.Status.BACKLOG:
-            suggestion.backlog_item.status = BacklogItem.Status.IN_PROGRESS
-            suggestion.backlog_item.save(update_fields=["status"])
+        _mark_accepted(suggestion)
         messages.success(request, f"Added {suggestion.backlog_item.title} to your calendar.")
 
     elif action == "reject":
@@ -314,6 +370,16 @@ def weekly_schedule(request):
     # Real dates rather than a generic Mon-Sun, so the free time shown accounts
     # for one-off commitments too.
     today = timezone.localdate()
+
+    # One query for the week's sessions rather than one per day.
+    sessions_by_day = {}
+    week_sessions = request.user.suggestions.filter(
+        date__range=(today, today + timedelta(days=6)),
+        status__in=[Suggestion.Status.PENDING, Suggestion.Status.ACCEPTED],
+    ).select_related("backlog_item")
+    for suggestion in week_sessions:
+        sessions_by_day.setdefault(suggestion.date, []).append(suggestion)
+
     week = []
     for offset in range(7):
         day = today + timedelta(days=offset)
@@ -324,6 +390,7 @@ def weekly_schedule(request):
                 "blocks": request.user.recurring_blocks.filter(weekday=day.weekday()),
                 "free": gaps,
                 "free_label": humanize_minutes(sum(gap.minutes for gap in gaps)),
+                "sessions": sessions_by_day.get(day, []),
             }
         )
 
@@ -335,6 +402,7 @@ def weekly_schedule(request):
             "block_form": block_form,
             "notification_form": notification_form,
             "week": week,
+            "pending_count": sum(1 for s in week_sessions if s.status == Suggestion.Status.PENDING),
             "commitments": request.user.commitments.filter(ends_at__gte=timezone.now())[:10],
         },
     )

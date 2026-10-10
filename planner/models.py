@@ -147,10 +147,14 @@ class BacklogItem(models.Model):
     def rules(self):
         return SESSION_RULES.get(self.media_type, SESSION_RULES[MediaType.BOOK])
 
-    def session_minutes_for(self, available_minutes):
-        """Length of sitting to propose in a gap this size, or None if it won't fit."""
+    def session_minutes_for(self, available_minutes, remaining=None):
+        """Length of sitting to propose in a gap this size, or None if it won't fit.
+
+        `remaining` lets week planning pass in what is left after the sittings
+        already planned on other days. It defaults to the real remaining time.
+        """
         rules = self.rules
-        remaining = self.remaining_minutes
+        remaining = self.remaining_minutes if remaining is None else remaining
         if remaining <= 0 or available_minutes < MIN_USABLE_MINUTES:
             return None
 

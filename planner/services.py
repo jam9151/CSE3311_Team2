@@ -15,6 +15,10 @@ from .models import MIN_USABLE_MINUTES, BacklogItem, Suggestion
 # How long a rejection keeps counting against an item.
 REJECTION_MEMORY_DAYS = 14
 
+# Taken off an item's score for every sitting of it already planned earlier in
+# the same week, so a week mixes things instead of repeating the top item.
+VARIETY_PENALTY = 15
+
 
 @dataclass(frozen=True)
 class Interval:
@@ -149,9 +153,14 @@ def recent_rejection_counts(user, on_date=None):
     return counts
 
 
-def _score(item, gap, rejected_counts):
-    """Rank one item against one gap. Higher wins. None means it doesn't fit."""
-    minutes = item.session_minutes_for(gap.minutes)
+def _score(item, gap, rejected_counts, earlier=()):
+    """Rank one item against one gap. Higher wins. None means it doesn't fit.
+
+    `earlier` is the minutes of each sitting of this item already planned on
+    other days of the week being planned.
+    """
+    remaining = max(0, item.remaining_minutes - sum(earlier))
+    minutes = item.session_minutes_for(gap.minutes, remaining=remaining)
     if minutes is None:
         return None
 
@@ -169,26 +178,33 @@ def _score(item, gap, rejected_counts):
     if not item.rules["chunkable"]:
         score += 15
 
-    if minutes >= item.remaining_minutes:
+    if minutes >= remaining:
         score += 20
+
+    score -= VARIETY_PENALTY * len(earlier)
 
     # Not a hard filter -- a rejected item should come back eventually.
     score -= 35 * rejected_counts.get(item.pk, 0)
-    return score, minutes
+    return score, minutes, remaining
 
 
-def _reason_for(item, gap, minutes):
+def _reason_for(item, gap, minutes, remaining):
     gap_text = humanize_minutes(gap.minutes)
     if not item.rules["chunkable"]:
-        return f"You have {gap_text} free and its {humanize_minutes(item.remaining_minutes)} runtime fits in one sitting."
-    if minutes >= item.remaining_minutes:
+        return f"You have {gap_text} free and its {humanize_minutes(remaining)} runtime fits in one sitting."
+    if minutes >= remaining:
         return f"{gap_text} free is just enough to finish it."
     return f"{gap_text} free, so {item.rules['unit']} of this is a comfortable fit."
 
 
-def suggest_for_day(user, day=None, limit=3, persist=True):
-    """Pick something for each free gap. One item per gap, no repeats."""
+def suggest_for_day(user, day=None, limit=3, persist=True, planned=None):
+    """Pick something for each free gap. One item per gap, no repeats.
+
+    `planned` is {backlog_item_id: [minutes, ...]} for sittings already planned
+    on other days. Only suggest_for_week passes it.
+    """
     day = day or timezone.localdate()
+    planned = planned or {}
     gaps = free_intervals(user, day)
     if not gaps:
         return []
@@ -221,17 +237,17 @@ def suggest_for_day(user, day=None, limit=3, persist=True):
         for item in candidates:
             if item.pk in used_items:
                 continue
-            scored = _score(item, gap, rejected_counts)
+            scored = _score(item, gap, rejected_counts, planned.get(item.pk, ()))
             if scored is None:
                 continue
-            score, minutes = scored
+            score, minutes, remaining = scored
             if best is None or score > best[0]:
-                best = (score, minutes, item)
+                best = (score, minutes, remaining, item)
 
         if best is None:
             continue
 
-        _, minutes, item = best
+        _, minutes, remaining, item = best
         suggestion = Suggestion(
             user=user,
             backlog_item=item,
@@ -239,7 +255,7 @@ def suggest_for_day(user, day=None, limit=3, persist=True):
             start_time=gap.start,
             end_time=_from_minutes(_to_minutes(gap.start) + minutes),
             minutes=minutes,
-            reason=_reason_for(item, gap, minutes),
+            reason=_reason_for(item, gap, minutes, remaining),
         )
         if persist:
             suggestion.save()
@@ -247,6 +263,36 @@ def suggest_for_day(user, day=None, limit=3, persist=True):
         used_items.add(item.pk)
 
     return suggestions
+
+
+def suggest_for_week(user, start=None, days=7, per_day=3, persist=True):
+    """Run suggest_for_day over a stretch of days. Returns {date: [suggestions]}.
+
+    Days are planned in order and each one is told what the earlier days took.
+    That stops a film being planned twice, stops a book being planned past its
+    last page, and nudges later days toward something different.
+
+    Callers clear stale pending suggestions in the window first; anything still
+    pending or accepted there is counted as already planned.
+    """
+    start = start or timezone.localdate()
+    window = [start + timedelta(days=offset) for offset in range(days)]
+
+    planned = {}
+    existing = user.suggestions.filter(
+        date__range=(window[0], window[-1]),
+        status__in=[Suggestion.Status.ACCEPTED, Suggestion.Status.PENDING],
+    )
+    for suggestion in existing:
+        planned.setdefault(suggestion.backlog_item_id, []).append(suggestion.minutes)
+
+    plan = {}
+    for day in window:
+        made = suggest_for_day(user, day, limit=per_day, persist=persist, planned=planned)
+        for suggestion in made:
+            planned.setdefault(suggestion.backlog_item_id, []).append(suggestion.minutes)
+        plan[day] = made
+    return plan
 
 
 DEFAULT_REMINDER_LEAD = 15

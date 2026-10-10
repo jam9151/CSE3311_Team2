@@ -27,6 +27,8 @@ urlpatterns = [
     path("calendar/", views.calendar, name="calendar"),
     # Suggestions
     path("suggestions/refresh/", views.refresh_suggestions, name="refresh_suggestions"),
+    path("suggestions/plan-week/", views.plan_week, name="plan_week"),
+    path("suggestions/accept-week/", views.accept_week, name="accept_week"),
     path("suggestions/<int:pk>/<str:action>/", views.respond_to_suggestion, name="respond_to_suggestion"),
     # Reviews
     path("reviews/", views.reviews, name="reviews"),

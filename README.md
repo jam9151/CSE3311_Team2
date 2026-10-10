@@ -80,6 +80,7 @@ mermaid diagrams are drawn by a real browser.
 | Priority system | done, 1-5, editable from the backlog list |
 | Free time detection | done |
 | Accept/reject suggestions | done, rejections feed back into the scoring |
+| Plan the week | done, one click plans the next 7 days, accept one by one or all at once |
 | Review manager | done |
 | Notifications | partly done, reminders while a tab is open, no background push yet |
 
@@ -119,6 +120,14 @@ picked would take the entire free day, which is how it behaved at first.
 So a 2 hour gap in the morning gets you a chapter, and a long free afternoon
 gets the movie.
 
+"Plan my week" on My week runs `suggest_for_week()`, which calls
+`suggest_for_day()` for each of the next seven days in order and tells each day
+what the earlier ones already took. That is what stops a film being planned
+twice or a book being planned past its last page, and each earlier sitting of
+an item costs it `VARIETY_PENALTY` points so the week isn't the same title
+seven times. Anything already accepted counts as planned. The new suggestions
+are pending until you add them, one at a time or with "Add all".
+
 ## Files
 
 ```
@@ -127,7 +136,7 @@ planner/
   services.py   free time detection + suggestion scoring
   views.py
   forms.py      includes the mavs.uta.edu signup check
-  tests.py      52 tests, mostly on the scheduling
+  tests.py      75 tests, mostly on the scheduling
   management/commands/seed_catalog.py
 templates/
 static/js/reminders.js   polls for upcoming sessions and shows notifications
