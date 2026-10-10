@@ -66,9 +66,20 @@ class CatalogItem(models.Model):
         help_text="Aggregate score out of 10",
     )
     typical_minutes = models.PositiveIntegerField(help_text="Typical time to finish, in minutes")
+    # Where an imported row came from, so running the import again updates it
+    # instead of adding a copy. Blank for anything entered by hand.
+    source = models.CharField(max_length=20, blank=True)
+    source_id = models.CharField(max_length=60, blank=True)
 
     class Meta:
         ordering = ["title"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["source", "source_id"],
+                condition=~models.Q(source=""),
+                name="one_catalog_row_per_source_id",
+            )
+        ]
 
     def save(self, *args, **kwargs):
         if not self.slug:

@@ -5,8 +5,8 @@ from .models import BacklogItem, CatalogItem, Commitment, Profile, RecurringBloc
 
 @admin.register(CatalogItem)
 class CatalogItemAdmin(admin.ModelAdmin):
-    list_display = ["title", "media_type", "genre", "creator", "release_date", "typical_minutes", "rating"]
-    list_filter = ["media_type", "genre"]
+    list_display = ["title", "media_type", "genre", "creator", "release_date", "typical_minutes", "rating", "source"]
+    list_filter = ["media_type", "source", "genre"]
     search_fields = ["title", "creator", "description"]
     prepopulated_fields = {"slug": ("title",)}
 

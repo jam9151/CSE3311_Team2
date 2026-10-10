@@ -75,7 +75,7 @@ mermaid diagrams are drawn by a real browser.
 | Feature | Status |
 | --- | --- |
 | User accounts | done, `@mavs.uta.edu` only, confirmed by email link |
-| Media search | done, filter by type / genre / length |
+| Media search | done, filter by type / genre / length, paged, real titles via `import_catalog` |
 | Media details | done, shows whether it fits your free time today |
 | Visual calendar | done, month grid + day panel |
 | Weekly schedule | done, recurring blocks and one-off commitments, both editable |
@@ -85,6 +85,50 @@ mermaid diagrams are drawn by a real browser.
 | Plan the week | done, one click plans the next 7 days, accept one by one or all at once |
 | Review manager | done |
 | Notifications | partly done, reminders while a tab is open, no background push yet |
+
+## Growing the catalog
+
+`seed_catalog` loads 36 hand-entered titles. `import_catalog` pulls real ones
+from free sources, a few hundred at a time:
+
+```powershell
+python manage.py import_catalog --only books    # works right away, no key
+python manage.py import_catalog                 # everything you have a key for
+python manage.py import_catalog --limit 20      # a quick try, 20 per type
+python manage.py import_catalog --dry-run       # list what it would add
+```
+
+| Type | Source | Key |
+| --- | --- | --- |
+| Books | [Open Library](https://openlibrary.org/developers/api) | none |
+| Movies and TV | [TMDB](https://developer.themoviedb.org/) | free, `TMDB_API_KEY` |
+| Games | [RAWG](https://rawg.io/apidocs) | free, `RAWG_API_KEY` |
+
+Put the keys in `.env` (see `.env.example`). No restart needed, the command
+reads the file each time. A type with no key is skipped with a message and the
+rest still run. TMDB gives you both a short "API Key" and a long "API Read
+Access Token", either one works.
+
+Everything ends up as one number, `typical_minutes`, because that is all the
+scheduler needs:
+
+| Type | How the time is worked out |
+| --- | --- |
+| Movie | TMDB runtime, 40 to 300 minutes |
+| TV | episodes times episode length, shows over about 400 hours are skipped |
+| Book | pages times 1.3 minutes (`MINUTES_PER_PAGE`) |
+| Game | RAWG's average hours played, 1 to 300 hours |
+
+It is safe to run again. Each imported row remembers where it came from, so a
+second run refreshes it instead of adding a copy, which also means edits you
+make to an imported row in the admin are overwritten. A title you entered by
+hand, or that came from the seed data, wins over an imported one with the same
+title, type and year. If a source fails partway, what was saved before the
+problem stays saved.
+
+Book genres come from Open Library's subject tags and are approximate. Game
+playtimes are what RAWG's players report, so a few are off. Catalog data is
+credited in the footer, which TMDB's and RAWG's terms ask for.
 
 ## Email
 
@@ -182,9 +226,11 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      125 tests, mostly on the scheduling
+  tests.py      192 tests, mostly on the scheduling
   management/commands/seed_catalog.py
   management/commands/reset_accounts.py
+  management/commands/import_catalog.py
+  catalog_import.py   the Open Library, TMDB and RAWG importers
 mediaflow/env.py   reads .env at startup
 .env.example   copy to .env for real email settings
 templates/

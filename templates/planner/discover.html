@@ -22,7 +22,10 @@
   </div>
 </form>
 
-<p class="mb-3 text-sm text-muted">{{ result_count }} result{{ result_count|pluralize }}</p>
+<p class="mb-3 text-sm text-muted">
+  {{ result_count }} result{{ result_count|pluralize }}
+  {% if page.paginator.num_pages > 1 %}&middot; page {{ page.number }} of {{ page.paginator.num_pages }}{% endif %}
+</p>
 
 <div class="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-4">
   {% for item in results %}
@@ -52,4 +55,16 @@
     <p class="empty sm:col-span-2 lg:col-span-4">Nothing matched those filters. Try widening the search.</p>
   {% endfor %}
 </div>
+
+{% if page.paginator.num_pages > 1 %}
+  <nav class="mt-6 flex items-center justify-center gap-3 text-sm" aria-label="Pages of results">
+    {% if page.has_previous %}
+      <a class="btn btn-sm btn-secondary" href="?{% if page_query %}{{ page_query }}&amp;{% endif %}page={{ page.previous_page_number }}">Previous</a>
+    {% endif %}
+    <span class="text-muted">Page {{ page.number }} of {{ page.paginator.num_pages }}</span>
+    {% if page.has_next %}
+      <a class="btn btn-sm btn-secondary" href="?{% if page_query %}{{ page_query }}&amp;{% endif %}page={{ page.next_page_number }}">Next</a>
+    {% endif %}
+  </nav>
+{% endif %}
 {% endblock %}

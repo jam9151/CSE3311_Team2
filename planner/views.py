@@ -5,6 +5,7 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
+from django.core.paginator import Paginator
 from django.db.models import Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -290,16 +291,24 @@ def discover(request):
             results = results.filter(genre=form.cleaned_data["genre"])
         if form.cleaned_data.get("max_minutes"):
             results = results.filter(typical_minutes__lte=form.cleaned_data["max_minutes"])
-        results = results.order_by(form.cleaned_data.get("sort") or "title")
+        results = results.order_by(form.cleaned_data.get("sort") or "title", "pk")
 
     # So the cards can show "already on your backlog" instead of an Add button.
     owned = set(
         request.user.backlog_items.filter(catalog_item__isnull=False).values_list("catalog_item_id", flat=True)
     )
+    # The catalog runs to hundreds of rows once it has been imported into.
+    paginator = Paginator(results, 24)
+    page = paginator.get_page(request.GET.get("page"))
+    # The other filters, so the page links keep them.
+    params = request.GET.copy()
+    params.pop("page", None)
     context = {
         "form": form,
-        "results": results[:60],
-        "result_count": results.count(),
+        "results": page,
+        "page": page,
+        "page_query": params.urlencode(),
+        "result_count": paginator.count,
         "owned_ids": owned,
         "free_today": humanize_minutes(total_free_minutes(request.user, timezone.localdate())),
     }

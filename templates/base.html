@@ -58,6 +58,11 @@
 
   <footer class="border-t border-line px-6 py-4 text-sm text-muted">
     MediaFlow &middot; CSE 3311 Team 2 prototype
+    <p class="mt-1 text-xs">
+      Imported catalog data from <a href="https://www.themoviedb.org">TMDB</a> (movies and TV),
+      <a href="https://rawg.io">RAWG</a> (games) and <a href="https://openlibrary.org">Open Library</a> (books).
+      This product uses the TMDB API but is not endorsed or certified by TMDB.
+    </p>
   </footer>
   {% if user.is_authenticated %}
     <script defer src="{% static 'js/reminders.js' %}" data-url="{% url 'reminders_json' %}"></script>
