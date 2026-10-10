@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}Page not found · MediaFlow{% endblock %}
+
+{% block content %}
+<section class="card mx-auto my-8 max-w-md text-center">
+  <p class="eyebrow">404</p>
+  <h1 class="text-2xl font-bold tracking-tight">Page not found</h1>
+  <p class="mt-2 text-sm text-muted">That address doesn't go anywhere. It may have moved, or been typed wrong.</p>
+  <p class="mt-5">
+    {% if user.is_authenticated %}
+      <a class="btn" href="{% url 'dashboard' %}">Back to Today</a>
+    {% else %}
+      <a class="btn" href="{% url 'home' %}">Back to the start</a>
+    {% endif %}
+  </p>
+</section>
+{% endblock %}

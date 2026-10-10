@@ -50,6 +50,41 @@ def load_env_file(path):
         os.environ.setdefault(name, value)
 
 
+_TRUE = {"1", "true", "yes", "on"}
+_FALSE = {"0", "false", "no", "off"}
+
+
+def env_bool(name, default=False):
+    """A true/false setting. Unset or empty gives the default.
+
+    Anything else that isn't clearly true or false is an error rather than a
+    guess, so a typo like DJANGO_DEBUG=flase can't quietly leave debugging on.
+    """
+    raw = os.environ.get(name, "").strip().lower()
+    if not raw:
+        return default
+    if raw in _TRUE:
+        return True
+    if raw in _FALSE:
+        return False
+    raise ValueError(f"{name} must be true or false, not {os.environ[name]!r}.")
+
+
+def env_int(name, default):
+    raw = os.environ.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        raise ValueError(f"{name} must be a whole number, not {raw!r}.") from None
+
+
+def env_list(name):
+    """A comma separated setting as a list. Spaces are trimmed, blanks dropped."""
+    return [part.strip() for part in os.environ.get(name, "").split(",") if part.strip()]
+
+
 def clean_smtp_password(host, password):
     """Google shows an app password in groups of four, but the code has no spaces."""
     return password.replace(" ", "") if host.lower().endswith("gmail.com") else password

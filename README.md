@@ -21,7 +21,9 @@ python manage.py seed_catalog --demo
 python manage.py runserver
 ```
 
-Then go to `http://127.0.0.1:8000/`.
+Then go to `http://127.0.0.1:8000/`. Nothing needs configuring to run locally.
+After pulling changes, run the `pip install` line again in case a package was
+added.
 
 `seed_catalog` loads 36 titles into the catalog. The `--demo` flag also makes a
 test account with a full class/work schedule already filled in, which saves
@@ -279,6 +281,76 @@ Two things worth knowing about the defaults:
 - A gap gets one suggestion however long it is. A free Saturday with no
   commitments is one 15 hour gap, so it gets one suggestion.
 
+## Deploying
+
+Running locally needs no setup: with nothing configured, debug is on and the
+app uses development values. Deploying means one setting, `DJANGO_DEBUG=false`.
+From then on the app is strict. It refuses to start unless `DJANGO_SECRET_KEY`
+and `DJANGO_ALLOWED_HOSTS` are set, it won't accept a `django-insecure-` key,
+and a mistyped value (`DJANGO_DEBUG=flase`) is an error rather than a guess.
+It also changes these:
+
+- Cookies are marked secure and plain http is redirected to https.
+- Static files are served by WhiteNoise under hashed names, so a browser can
+  never keep an old copy of the CSS after a deploy.
+- Passwords must pass Django's four standard rules. They are off in development
+  so throwaway accounts can use anything.
+- Errors are logged to the console, and 404 and 500 pages are our own.
+
+Settings come from the environment or from `.env` (see `.env.example`). A
+variable set in the environment wins over the same one in the file.
+
+| Variable | Default | What it does |
+| --- | --- | --- |
+| `DJANGO_DEBUG` | `true` | Set `false` in production. |
+| `DJANGO_SECRET_KEY` | a dev key | Required when debug is off. |
+| `DJANGO_ALLOWED_HOSTS` | none | Comma separated host names. Required when debug is off. |
+| `DJANGO_CSRF_TRUSTED_ORIGINS` | none | Full origins such as `https://mediaflow.example.com`. Needed if form posts fail with a CSRF error behind a proxy. |
+| `DJANGO_SSL_REDIRECT` | `true` | Redirect http to https when debug is off. `false` lets you try production settings over plain http. |
+| `DJANGO_BEHIND_PROXY` | `false` | Set `true` when a proxy or host ends HTTPS and sets `X-Forwarded-Proto`. Most hosts do, and without it the site redirects forever. Leave it off otherwise, because anyone can send that header. |
+| `DJANGO_HSTS_SECONDS` | `0` | Off until you have seen HTTPS working, because browsers can't be told to forget it. Try `3600`, then `31536000`. |
+| `DATABASE_PATH` | `db.sqlite3` | Where the SQLite file lives. On a host whose disk is wiped on each deploy, point this at a persistent volume. |
+| `DJANGO_STATIC_ROOT` | `staticfiles/` | Where `collectstatic` puts the files. |
+| `DJANGO_LOG_LEVEL` | `INFO` | `WARNING` is quieter. |
+| `DJANGO_ENV_FILE` | `.env` | Read a different settings file. |
+| `EMAIL_*` | console | See Email above. Production needs real mail. |
+
+Make a secret key with:
+
+```bash
+python -c "from django.core.management.utils import get_random_secret_key as k; print(k())"
+```
+
+With the variables set, a first deploy is:
+
+```bash
+pip install -r requirements.txt
+python manage.py migrate
+python manage.py collectstatic --noinput
+gunicorn mediaflow.wsgi
+```
+
+`gunicorn` is a Linux server and isn't installed on Windows. `/healthz/` answers
+`{"status": "ok"}` when the database responds and a 503 when it doesn't, over
+plain http too, so a host's health check can use it.
+
+Without working email nobody can confirm an account and every new sign-up is
+stuck on the "check your email" page. `python manage.py check --deploy` warns
+about that along with anything else risky, and CI runs it on every push.
+
+### Checks on GitHub
+
+`.github/workflows/checks.yml` runs on every push and pull request:
+
+1. the migrations match the models (`makemigrations --check`)
+2. the whole test suite
+3. production settings load and pass `check --deploy` with warnings treated as
+   failures
+4. the committed `static/css/app.css` matches what `npm run build:css` makes
+
+If the last one fails, you used a Tailwind class in a template and didn't
+rebuild. Run `npm run build:css` and commit the result.
+
 ## Files
 
 ```
@@ -289,12 +361,14 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      262 tests, mostly on the scheduling
+  tests.py      291 tests, mostly on the scheduling
   management/commands/seed_catalog.py
   management/commands/reset_accounts.py
   management/commands/import_catalog.py
   catalog_import.py   the Open Library, TMDB and RAWG importers
-mediaflow/env.py   reads .env at startup
+mediaflow/settings.py   everything configurable, read from the environment
+mediaflow/env.py   reads .env and parses the variables
+.github/workflows/checks.yml   the checks that run on every push
 .env.example   copy to .env for real email settings
 templates/
 static/js/reminders.js   polls for upcoming sessions and shows notifications

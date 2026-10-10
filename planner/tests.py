@@ -3,6 +3,8 @@ import json
 import os
 import re
 import smtplib
+import subprocess
+import sys
 import tempfile
 import urllib.error
 import urllib.parse
@@ -17,10 +19,12 @@ from django.contrib.auth import get_user_model
 from django.core import mail, signing
 from django.core.management import call_command
 from django.core.management.base import CommandError
-from django.test import TestCase, override_settings
+from django.db import OperationalError
+from django.test import Client, TestCase, override_settings
+from django.urls import path
 from django.utils import timezone
 
-from mediaflow.env import clean_smtp_password, load_env_file, parse_env_file
+from mediaflow.env import clean_smtp_password, env_bool, env_int, env_list, load_env_file, parse_env_file
 
 from .catalog_import import (
     BookSource,
@@ -2336,3 +2340,356 @@ class ScoringOverrideTests(TestCase):
             self.user, start=WEEK_START, persist=False, weights=replace(DEFAULT_WEIGHTS, variety_penalty=0)
         )
         self.assertEqual({day[0].backlog_item.title for day in plan.values()}, {"A"})
+
+
+# ---------------------------------------------------------------- deploying
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+NO_ENV_FILE = Path(tempfile.gettempdir()) / "mediaflow-no-such-env-file"
+# Long, varied and not "django-insecure-", so Django's own deploy check accepts it.
+STRONG_KEY = "q7Zk!2mXp4Nw7Rt1Ys5Uc9Hd3Lf6Gj0Be8Va4Tx3Oi5Pl2Km9Jn7Hb1Gv"
+PRODUCTION = {
+    "DJANGO_DEBUG": "false", "DJANGO_SECRET_KEY": STRONG_KEY, "DJANGO_ALLOWED_HOSTS": "mediaflow.example.com",
+    "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend",  # never used, just not the console
+}
+
+DUMP_SETTINGS = """
+import json
+from mediaflow import settings as s
+print("DUMP " + json.dumps({
+    "debug": s.DEBUG, "key_is_dev": s.SECRET_KEY.startswith("django-insecure-"), "hosts": s.ALLOWED_HOSTS,
+    "csrf_origins": s.CSRF_TRUSTED_ORIGINS, "validators": len(s.AUTH_PASSWORD_VALIDATORS),
+    "whitenoise_second": s.MIDDLEWARE[1] == "whitenoise.middleware.WhiteNoiseMiddleware",
+    "whitenoise_anywhere": any("whitenoise" in m for m in s.MIDDLEWARE),
+    "cookies_secure": [getattr(s, "SESSION_COOKIE_SECURE", False), getattr(s, "CSRF_COOKIE_SECURE", False)],
+    "ssl_redirect": getattr(s, "SECURE_SSL_REDIRECT", False),
+    "proxy_header": getattr(s, "SECURE_PROXY_SSL_HEADER", None),
+    "hsts": getattr(s, "SECURE_HSTS_SECONDS", 0),
+    "static_storage": getattr(s, "STORAGES", {}).get("staticfiles", {}).get("BACKEND"),
+    "static_root": str(s.STATIC_ROOT), "database": str(s.DATABASES["default"]["NAME"]),
+    "log_level": s.LOGGING["root"]["level"], "silenced": getattr(s, "SILENCED_SYSTEM_CHECKS", []),
+    "email_backend": s.EMAIL_BACKEND,
+}))
+"""
+
+# Drives the real app in production mode the way a browser would.
+PRODUCTION_SMOKE = r"""
+import json, os
+import django
+os.environ.setdefault("DJANGO_SETTINGS_MODULE", "mediaflow.settings")
+django.setup()
+from django.contrib.staticfiles.storage import staticfiles_storage
+from django.core.management import call_command
+from django.test import Client
+
+call_command("migrate", verbosity=0)
+browser = Client(HTTP_HOST="mediaflow.example.com")
+out = {}
+r = browser.get("/healthz/")
+out["health_over_http"] = [r.status_code, r.json()]
+r = browser.get("/")
+out["home_over_http"] = [r.status_code, r["Location"] if r.status_code == 301 else None]
+out["home_over_https"] = browser.get("/", secure=True).status_code
+hashed = staticfiles_storage.stored_name("css/app.css")
+r = browser.get("/static/" + hashed, secure=True)
+out["hashed_css"] = [hashed != "css/app.css", r.status_code, "immutable" in r.get("Cache-Control", "")]
+out["plain_js"] = browser.get("/static/js/stats.js", secure=True).status_code
+out["tailwind_source"] = browser.get("/static/src/app.css", secure=True).status_code
+out["admin_css"] = browser.get("/static/admin/css/base.css", secure=True).status_code
+out["csrf_cookie_secure"] = bool(browser.get("/accounts/login/", secure=True).cookies["csrftoken"]["secure"])
+r = browser.get("/nope/", secure=True)
+out["not_found"] = [r.status_code, b"Page not found" in r.content, b"<h1>Not Found</h1>" in r.content]
+form = {"username": "newbie", "email": "newbie@mavs.uta.edu"}
+r = browser.post("/register/", {**form, "password1": "password", "password2": "password"}, secure=True)
+out["weak_password"] = [r.status_code, b"too common" in r.content]
+r = browser.post("/register/", {**form, "password1": "correct-horse-battery-9", "password2": "correct-horse-battery-9"}, secure=True)
+out["strong_password"] = r.status_code
+print("RESULT " + json.dumps(out))
+"""
+
+
+def run_python(args, env=None, timeout=240):
+    """Run python in a fresh process whose environment is exactly what is given.
+
+    Settings are read when the process starts, so each case needs its own. The
+    developer's real .env and any DJANGO_* variables are kept out.
+    """
+    clean = {
+        key: value for key, value in os.environ.items()
+        if not key.startswith(("DJANGO_", "EMAIL_")) and key not in {"DATABASE_PATH", "DEFAULT_FROM_EMAIL"}
+    }
+    clean.update({"DJANGO_ENV_FILE": str(NO_ENV_FILE), "PYTHONPATH": str(PROJECT_ROOT), "PYTHONIOENCODING": "utf-8"})
+    clean.update(env or {})
+    return subprocess.run(
+        [sys.executable, *args], cwd=PROJECT_ROOT, env=clean, capture_output=True, text=True, timeout=timeout
+    )
+
+
+def settings_under(env=None):
+    result = run_python(["-c", DUMP_SETTINGS], env)
+    marked = [line for line in result.stdout.splitlines() if line.startswith("DUMP ")]
+    return result, (json.loads(marked[-1][5:]) if marked else None)
+
+
+class EnvHelperTests(TestCase):
+    def with_env(self, value):
+        patcher = mock.patch.dict(os.environ, {} if value is None else {"MEDIAFLOW_TEST": value})
+        patcher.start()
+        self.addCleanup(patcher.stop)
+        if value is None:
+            os.environ.pop("MEDIAFLOW_TEST", None)
+
+    def test_booleans_accept_the_usual_spellings(self):
+        for raw in ("1", "true", "TRUE", " Yes ", "on"):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"MEDIAFLOW_TEST": raw}):
+                self.assertTrue(env_bool("MEDIAFLOW_TEST"))
+        for raw in ("0", "false", "No", "OFF"):
+            with self.subTest(raw=raw), mock.patch.dict(os.environ, {"MEDIAFLOW_TEST": raw}):
+                self.assertFalse(env_bool("MEDIAFLOW_TEST", default=True))
+
+    def test_unset_or_empty_means_the_default(self):
+        self.with_env(None)
+        self.assertTrue(env_bool("MEDIAFLOW_TEST", default=True))
+        self.assertFalse(env_bool("MEDIAFLOW_TEST", default=False))
+        with mock.patch.dict(os.environ, {"MEDIAFLOW_TEST": "  "}):
+            self.assertTrue(env_bool("MEDIAFLOW_TEST", default=True))
+
+    def test_a_typo_is_an_error_not_a_guess(self):
+        with mock.patch.dict(os.environ, {"MEDIAFLOW_TEST": "flase"}):
+            with self.assertRaisesMessage(ValueError, "MEDIAFLOW_TEST must be true or false"):
+                env_bool("MEDIAFLOW_TEST")
+
+    def test_integers(self):
+        with mock.patch.dict(os.environ, {"MEDIAFLOW_TEST": " 3600 "}):
+            self.assertEqual(env_int("MEDIAFLOW_TEST", 0), 3600)
+        self.with_env(None)
+        self.assertEqual(env_int("MEDIAFLOW_TEST", 587), 587)
+        with mock.patch.dict(os.environ, {"MEDIAFLOW_TEST": "an hour"}):
+            with self.assertRaisesMessage(ValueError, "MEDIAFLOW_TEST must be a whole number"):
+                env_int("MEDIAFLOW_TEST", 0)
+
+    def test_lists_are_trimmed_and_blanks_dropped(self):
+        with mock.patch.dict(os.environ, {"MEDIAFLOW_TEST": " a.example.com, b.example.com ,, "}):
+            self.assertEqual(env_list("MEDIAFLOW_TEST"), ["a.example.com", "b.example.com"])
+        self.with_env(None)
+        self.assertEqual(env_list("MEDIAFLOW_TEST"), [])
+
+
+class SettingsTests(TestCase):
+    """Settings are read once at startup, so each case runs in its own process."""
+
+    def test_development_needs_no_configuration(self):
+        result, s = settings_under()
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(s["debug"])
+        self.assertTrue(s["key_is_dev"])
+        self.assertEqual(s["hosts"], [])
+        self.assertEqual(s["validators"], 0)
+        self.assertFalse(s["whitenoise_anywhere"])
+        self.assertEqual(s["cookies_secure"], [False, False])
+        self.assertFalse(s["ssl_redirect"])
+        self.assertEqual(s["hsts"], 0)
+        self.assertTrue(s["email_backend"].endswith("console.EmailBackend"))
+
+    def test_production_will_not_start_without_a_secret_key(self):
+        result, _ = settings_under({"DJANGO_DEBUG": "false", "DJANGO_ALLOWED_HOSTS": "a.example.com"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DJANGO_SECRET_KEY is not set", result.stderr)
+
+    def test_production_will_not_start_on_a_placeholder_key(self):
+        result, _ = settings_under({**PRODUCTION, "DJANGO_SECRET_KEY": "django-insecure-change-me"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("placeholder", result.stderr)
+
+    def test_production_will_not_start_without_allowed_hosts(self):
+        result, _ = settings_under({"DJANGO_DEBUG": "false", "DJANGO_SECRET_KEY": STRONG_KEY})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DJANGO_ALLOWED_HOSTS is not set", result.stderr)
+
+    def test_a_typo_in_debug_stops_startup_instead_of_picking_a_side(self):
+        result, _ = settings_under({"DJANGO_DEBUG": "flase"})
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("DJANGO_DEBUG must be true or false", result.stderr)
+
+    def test_production_defaults(self):
+        result, s = settings_under(PRODUCTION)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(s["debug"])
+        self.assertFalse(s["key_is_dev"])
+        self.assertEqual(s["hosts"], ["mediaflow.example.com"])
+        self.assertEqual(s["validators"], 4)
+        self.assertTrue(s["whitenoise_second"])  # straight after SecurityMiddleware
+        self.assertEqual(s["static_storage"], "whitenoise.storage.CompressedManifestStaticFilesStorage")
+        self.assertEqual(s["cookies_secure"], [True, True])
+        self.assertTrue(s["ssl_redirect"])
+        self.assertIsNone(s["proxy_header"])  # off until a proxy is vouched for
+        self.assertEqual(s["hsts"], 0)         # off until HTTPS has been seen working
+        self.assertTrue(s["static_root"].endswith("staticfiles"))
+        self.assertTrue(s["database"].endswith("db.sqlite3"))
+        self.assertEqual(s["log_level"], "INFO")
+
+    def test_production_options(self):
+        result, s = settings_under({
+            **PRODUCTION,
+            "DJANGO_ALLOWED_HOSTS": "a.example.com, b.example.com",
+            "DJANGO_CSRF_TRUSTED_ORIGINS": "https://a.example.com",
+            "DJANGO_SSL_REDIRECT": "false", "DJANGO_BEHIND_PROXY": "true", "DJANGO_HSTS_SECONDS": "3600",
+            "DJANGO_LOG_LEVEL": "warning", "DATABASE_PATH": "/data/mediaflow.sqlite3",
+            "DJANGO_STATIC_ROOT": "/data/static",
+        })
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(s["hosts"], ["a.example.com", "b.example.com"])
+        self.assertEqual(s["csrf_origins"], ["https://a.example.com"])
+        self.assertFalse(s["ssl_redirect"])
+        self.assertEqual(s["proxy_header"], ["HTTP_X_FORWARDED_PROTO", "https"])
+        self.assertEqual(s["hsts"], 3600)
+        self.assertEqual(s["log_level"], "WARNING")
+        self.assertTrue(s["database"].replace("\\", "/").endswith("/data/mediaflow.sqlite3"))
+        self.assertTrue(s["static_root"].replace("\\", "/").endswith("/data/static"))
+
+    def test_debug_can_stay_on_with_a_real_key_set(self):
+        _, s = settings_under({"DJANGO_SECRET_KEY": STRONG_KEY})
+        self.assertTrue(s["debug"])
+        self.assertFalse(s["key_is_dev"])
+
+    def test_settings_can_come_from_the_env_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            env_file = Path(folder) / ".env"
+            env_file.write_text(
+                f'DJANGO_DEBUG=false\nDJANGO_SECRET_KEY="{STRONG_KEY}"\nDJANGO_ALLOWED_HOSTS=from-file.example.com\n'
+            )
+            result, s = settings_under({"DJANGO_ENV_FILE": str(env_file)})
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertFalse(s["debug"])
+        self.assertEqual(s["hosts"], ["from-file.example.com"])
+
+    def test_a_real_environment_variable_beats_the_env_file(self):
+        with tempfile.TemporaryDirectory() as folder:
+            env_file = Path(folder) / ".env"
+            env_file.write_text("DJANGO_DEBUG=false\n")
+            _, s = settings_under({"DJANGO_ENV_FILE": str(env_file), "DJANGO_DEBUG": "true"})
+        self.assertTrue(s["debug"])
+
+    def test_the_email_settings_are_untouched_by_all_this(self):
+        _, s = settings_under({**PRODUCTION, "EMAIL_BACKEND": "django.core.mail.backends.smtp.EmailBackend"})
+        self.assertTrue(s["email_backend"].endswith("smtp.EmailBackend"))
+
+
+class DeployCheckTests(TestCase):
+    """Django's own `check --deploy`, with warnings counted as failures."""
+
+    def deploy_check(self, **extra):
+        return run_python(["manage.py", "check", "--deploy", "--fail-level", "WARNING"], {**PRODUCTION, **extra})
+
+    def test_production_settings_pass(self):
+        result = self.deploy_check()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_production_settings_pass_with_hsts_on_too(self):
+        result = self.deploy_check(DJANGO_HSTS_SECONDS="3600")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_console_email_in_production_is_flagged(self):
+        # Without real email nobody can confirm an account, so the site looks broken.
+        result = self.deploy_check(EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("planner.W001", result.stdout + result.stderr)
+        self.assertIn("confirmation emails never reach anyone", result.stdout + result.stderr)
+
+    def test_the_other_unreal_mail_backends_are_flagged_too(self):
+        for backend in ("dummy", "locmem", "filebased"):
+            with self.subTest(backend=backend):
+                result = self.deploy_check(EMAIL_BACKEND=f"django.core.mail.backends.{backend}.EmailBackend")
+                self.assertIn("planner.W001", result.stdout + result.stderr)
+
+    def test_the_check_really_does_catch_a_weak_setup(self):
+        # Switching the HTTPS redirect off is allowed, but it is not a clean bill of health.
+        result = self.deploy_check(DJANGO_SSL_REDIRECT="false")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SECURE_SSL_REDIRECT", result.stdout + result.stderr)
+
+
+class ProductionSmokeTests(TestCase):
+    """Collect the static files, then use the app the way a browser would, in production mode."""
+
+    def test_the_whole_thing_hangs_together(self):
+        with tempfile.TemporaryDirectory() as folder:
+            env = {
+                **PRODUCTION, "DJANGO_ALLOWED_HOSTS": "mediaflow.example.com",
+                "DJANGO_STATIC_ROOT": str(Path(folder) / "static"), "DATABASE_PATH": str(Path(folder) / "db.sqlite3"),
+            }
+            collected = run_python(["manage.py", "collectstatic", "--noinput"], env)
+            self.assertEqual(collected.returncode, 0, collected.stdout + collected.stderr)
+            self.assertTrue((Path(folder) / "static" / "staticfiles.json").exists())
+
+            result = run_python(["-c", PRODUCTION_SMOKE], env)
+        self.assertEqual(result.returncode, 0, result.stderr[-2000:])
+        out = json.loads([line for line in result.stdout.splitlines() if line.startswith("RESULT ")][-1][7:])
+
+        self.assertEqual(out["health_over_http"], [200, {"status": "ok"}])       # not redirected
+        self.assertEqual(out["home_over_http"], [301, "https://mediaflow.example.com/"])
+        self.assertEqual(out["home_over_https"], 200)
+        self.assertEqual(out["hashed_css"], [True, 200, True])                   # hashed name, cached for good
+        self.assertEqual((out["plain_js"], out["admin_css"]), (200, 200))
+        self.assertEqual(out["tailwind_source"], 404)                            # a build input, not served
+        self.assertTrue(out["csrf_cookie_secure"])
+        self.assertEqual(out["not_found"], [404, True, False])                   # our page, not Django's
+        self.assertEqual(out["weak_password"], [200, True])
+        self.assertEqual(out["strong_password"], 302)
+
+
+class HealthCheckTests(TestCase):
+    def test_answers_without_signing_in(self):
+        response = self.client.get("/healthz/")
+        self.assertEqual((response.status_code, response.json()), (200, {"status": "ok"}))
+
+    def test_says_so_when_the_database_is_down(self):
+        with mock.patch("planner.views.connection") as connection:
+            connection.cursor.side_effect = OperationalError("database is locked")
+            response = self.client.get("/healthz/")
+        self.assertEqual((response.status_code, response.json()), (503, {"status": "error"}))
+
+    def test_reveals_nothing_about_the_error(self):
+        with mock.patch("planner.views.connection") as connection:
+            connection.cursor.side_effect = OperationalError("password=hunter2 at /srv/db")
+            response = self.client.get("/healthz/")
+        self.assertNotIn("hunter2", response.content.decode())
+
+
+def _explode(request):
+    raise RuntimeError("secret internal detail")
+
+
+# Doubles as a URLconf for the 500 test below.
+urlpatterns = [path("boom/", _explode)]
+
+
+class ErrorPageTests(TestCase):
+    def test_a_missing_page_is_a_friendly_404_with_a_way_back(self):
+        response = self.client.get("/definitely/not/here/")
+        self.assertEqual(response.status_code, 404)
+        self.assertContains(response, "Page not found", status_code=404)
+        self.assertContains(response, 'href="/"', status_code=404)
+
+    def test_a_signed_in_student_is_sent_back_to_today(self):
+        self.client.force_login(make_user())
+        response = self.client.get("/definitely/not/here/")
+        self.assertContains(response, "Back to Today", status_code=404)
+        self.assertContains(response, 'href="/calendar/"', status_code=404)  # the usual nav is there
+
+    def test_a_crash_shows_a_plain_page_and_none_of_the_details(self):
+        with override_settings(ROOT_URLCONF="planner.tests"):
+            browser = Client(raise_request_exception=False)
+            with self.assertLogs("django.request", level="ERROR"):
+                response = browser.get("/boom/")
+        self.assertEqual(response.status_code, 500)
+        self.assertContains(response, "Something went wrong", status_code=500)
+        self.assertNotContains(response, "secret internal detail", status_code=500)
+        self.assertNotContains(response, "stylesheet", status_code=500)  # needs nothing else to work
+
+    def test_the_crash_is_logged_with_its_details_even_though_the_page_hides_them(self):
+        with override_settings(ROOT_URLCONF="planner.tests"):
+            browser = Client(raise_request_exception=False)
+            with self.assertLogs("django.request", level="ERROR") as logs:
+                browser.get("/boom/")
+        self.assertIn("secret internal detail", "\n".join(logs.output))

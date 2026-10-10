@@ -1,1 +1,5 @@
 Django>=5.2,<6.0
+# Serves the built CSS and JS when DEBUG is off. Not used in development.
+whitenoise>=6.7,<7
+# The production web server. It does not run on Windows, so only install it elsewhere.
+gunicorn>=22; sys_platform != "win32"

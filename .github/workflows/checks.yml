@@ -1,0 +1,66 @@
+name: Checks
+
+# Runs on every push and every pull request. A red cross on a commit means one
+# of these steps failed, and the log says which.
+on:
+  push:
+  pull_request:
+
+# A newer push to the same branch makes the older run pointless.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      # Fails if a model was changed without running makemigrations.
+      - name: Migrations are up to date
+        run: python manage.py makemigrations --check --dry-run
+
+      - name: Tests
+        run: python manage.py test
+
+      # Loads the settings the way a real deployment does and runs Django's own
+      # security checks on them, counting warnings as failures. The values are
+      # throwaways that only exist for this step.
+      - name: Production settings pass the deploy checks
+        env:
+          DJANGO_DEBUG: "false"
+          DJANGO_SECRET_KEY: "ci-only-q7Zk!2mXp4Nw7Rt1Ys5Uc9Hd3Lf6Gj0Be8Va4Tx3Oi5Pl2Km9Jn7Hb1Gv"
+          DJANGO_ALLOWED_HOSTS: "mediaflow.example.com"
+          EMAIL_BACKEND: "django.core.mail.backends.smtp.EmailBackend"
+        run: python manage.py check --deploy --fail-level WARNING
+
+  css:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - run: npm ci
+
+      # The built stylesheet is committed, so it goes stale if a template uses a
+      # Tailwind class and nobody rebuilds. This catches that.
+      - name: Built CSS is up to date
+        run: |
+          npm run build:css
+          git diff --exit-code static/css/app.css || {
+            echo "static/css/app.css is out of date. Run 'npm run build:css' and commit the result."
+            exit 1
+          }

@@ -6,6 +6,7 @@ from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
+from django.db import DatabaseError, connection
 from django.db.models import Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -46,6 +47,16 @@ def _parse_date(raw, fallback=None):
         return datetime.strptime(raw, "%Y-%m-%d").date()
     except ValueError:
         return fallback
+
+
+def healthz(request):
+    """For a host's health check. Public, and only says whether the database answers."""
+    try:
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT 1")
+    except DatabaseError:
+        return JsonResponse({"status": "error"}, status=503)
+    return JsonResponse({"status": "ok"})
 
 
 def home(request):
