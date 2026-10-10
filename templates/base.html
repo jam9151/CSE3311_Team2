@@ -16,6 +16,7 @@
     </a>
 
     {% if user.is_authenticated %}
+      {% if user.is_staff or user.profile.email_verified %}
       <div class="flex flex-wrap items-center gap-1">
         <a href="{% url 'dashboard' %}" class="nav-link {% if page == 'dashboard' %}nav-link-active{% endif %}">Today</a>
         <a href="{% url 'calendar' %}" class="nav-link {% if page == 'calendar' %}nav-link-active{% endif %}">Calendar</a>
@@ -24,6 +25,7 @@
         <a href="{% url 'weekly_schedule' %}" class="nav-link {% if page == 'weekly_schedule' %}nav-link-active{% endif %}">My week</a>
         <a href="{% url 'reviews' %}" class="nav-link {% if page == 'reviews' %}nav-link-active{% endif %}">Reviews</a>
       </div>
+      {% endif %}
       <form class="ml-auto flex items-center gap-3" action="{% url 'logout' %}" method="post">
         {% csrf_token %}
         <span class="text-sm text-muted">{{ user.username }}</span>

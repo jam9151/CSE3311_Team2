@@ -34,6 +34,8 @@ class Profile(models.Model):
     user = models.OneToOneField(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="profile")
     day_start = models.TimeField(default="08:00", help_text="When your day usually starts")
     day_end = models.TimeField(default="23:00", help_text="When you usually go to bed")
+    email_verified = models.BooleanField(default=False)
+    verification_sent_at = models.DateTimeField(null=True, blank=True)
     notify_enabled = models.BooleanField(default=False, help_text="Remind me before planned sessions and commitments")
     notify_lead_minutes = models.PositiveSmallIntegerField(
         default=15,

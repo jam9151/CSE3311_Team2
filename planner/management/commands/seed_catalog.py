@@ -161,7 +161,9 @@ class Command(BaseCommand):
             user.save()
 
         Profile.objects.update_or_create(
-            user=user, defaults={"day_start": time(8, 0), "day_end": time(23, 30)}
+            user=user,
+            # No mailbox behind the demo address, so it can't confirm by email.
+            defaults={"day_start": time(8, 0), "day_end": time(23, 30), "email_verified": True},
         )
 
         user.recurring_blocks.all().delete()

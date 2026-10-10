@@ -1,6 +1,12 @@
+import io
+import re
+import smtplib
 from datetime import date, datetime, time, timedelta
+from unittest import mock
 
 from django.contrib.auth import get_user_model
+from django.core import mail, signing
+from django.core.management import call_command
 from django.test import TestCase
 from django.utils import timezone
 
@@ -15,6 +21,7 @@ from .services import (
     total_free_minutes,
     upcoming_reminders,
 )
+from .verification import TOKEN_MAX_AGE_DAYS
 
 # A Tuesday. Most of these tests pin a fixed date because free_intervals()
 # clips gaps that have already passed when the day is today, which would make
@@ -26,7 +33,11 @@ def make_user(username="sam", **profile_kwargs):
     user = get_user_model().objects.create_user(
         username=username, password="test-password", email=f"{username}@mavs.uta.edu"
     )
-    Profile.objects.create(user=user, **{"day_start": time(8), "day_end": time(23), **profile_kwargs})
+    # Verified by default so tests can reach the app. VerificationTests builds
+    # unverified users by going through the registration form instead.
+    Profile.objects.create(
+        user=user, **{"day_start": time(8), "day_end": time(23), "email_verified": True, **profile_kwargs}
+    )
     return user
 
 
@@ -724,3 +735,218 @@ class WeekViewTests(TestCase):
 
     def test_accept_week_is_post_only(self):
         self.assertEqual(self.client.get("/suggestions/accept-week/").status_code, 405)
+
+
+class VerificationTests(TestCase):
+    """Sign-up now ends on a holding page until the emailed link is opened."""
+
+    link_pattern = re.compile(r"http://testserver(/verify/\S+)")
+
+    def register(self, username="student", **overrides):
+        data = {
+            "username": username, "email": f"{username}@mavs.uta.edu",
+            "password1": "sturdy-passphrase-1", "password2": "sturdy-passphrase-1",
+        }
+        return self.client.post("/register/", {**data, **overrides})
+
+    def link_in(self, message):
+        return self.link_pattern.search(message.body).group(1)
+
+    def profile(self, username="student"):
+        return Profile.objects.get(user__username=username)
+
+    def test_registering_sends_one_email_with_a_link(self):
+        self.assertRedirects(self.register(), "/verify/")
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["student@mavs.uta.edu"])
+        self.assertRegex(mail.outbox[0].body, self.link_pattern)
+        self.assertFalse(self.profile().email_verified)
+        self.assertIsNotNone(self.profile().verification_sent_at)
+
+    def test_holding_page_names_the_address(self):
+        response = self.client.get("/verify/", follow=False)
+        self.assertEqual(response.status_code, 302)  # not signed in yet
+        self.register()
+        self.assertContains(self.client.get("/verify/"), "student@mavs.uta.edu")
+
+    def test_unverified_users_cannot_reach_the_app(self):
+        self.register()
+        for url in ["/dashboard/", "/calendar/", "/backlog/", "/discover/", "/schedule/", "/reviews/", "/"]:
+            with self.subTest(url=url):
+                response = self.client.get(url)
+                self.assertRedirects(response, "/verify/", fetch_redirect_response=False)
+
+    def test_unverified_users_can_still_sign_out(self):
+        self.register()
+        self.assertEqual(self.client.post("/accounts/logout/").status_code, 302)
+        self.assertNotIn("_auth_user_id", self.client.session)
+
+    def test_unverified_user_signing_in_again_lands_on_the_holding_page(self):
+        self.register()
+        self.client.post("/accounts/logout/")
+        self.client.post("/accounts/login/", {"username": "student", "password": "sturdy-passphrase-1"})
+        self.assertRedirects(self.client.get("/dashboard/"), "/verify/")
+
+    def test_the_link_unlocks_the_account(self):
+        self.register()
+        response = self.client.get(self.link_in(mail.outbox[0]))
+        self.assertRedirects(response, "/schedule/")
+        self.assertTrue(self.profile().email_verified)
+        self.assertEqual(self.client.get("/dashboard/").status_code, 200)
+
+    def test_the_link_works_in_another_browser(self):
+        self.register()
+        link = self.link_in(mail.outbox[0])
+        self.client.logout()
+        response = self.client.get(link)
+        self.assertRedirects(response, "/accounts/login/")
+        self.assertTrue(self.profile().email_verified)
+
+    def test_opening_the_link_twice_is_harmless(self):
+        self.register()
+        link = self.link_in(mail.outbox[0])
+        self.client.get(link)
+        response = self.client.get(link, follow=True)
+        self.assertTrue(self.profile().email_verified)
+        self.assertIn("already confirmed", " ".join(str(m) for m in response.context["messages"]))
+
+    def test_a_forged_link_is_rejected(self):
+        self.register()
+        token = self.link_in(mail.outbox[0]).strip("/").split("/")[-1]
+        for bad in [token + "x", "not-a-token", token[:-6], token.replace(":", "", 1)]:
+            with self.subTest(token=bad):
+                self.assertEqual(self.client.get(f"/verify/{bad}/").status_code, 400)
+        self.assertFalse(self.profile().email_verified)
+
+    def test_a_token_signed_with_a_different_salt_is_rejected(self):
+        self.register()
+        user = get_user_model().objects.get(username="student")
+        forged = signing.dumps({"uid": user.pk, "email": user.email}, salt="something-else")
+        self.assertEqual(self.client.get(f"/verify/{forged}/").status_code, 400)
+        self.assertFalse(self.profile().email_verified)
+
+    def test_an_old_link_expires(self):
+        self.register()
+        link = self.link_in(mail.outbox[0])
+        later = timezone.now().timestamp() + (TOKEN_MAX_AGE_DAYS * 24 * 60 * 60) + 60
+        with mock.patch("django.core.signing.time.time", return_value=later):
+            self.assertEqual(self.client.get(link).status_code, 400)
+        self.assertFalse(self.profile().email_verified)
+
+    def test_a_link_still_works_just_inside_the_limit(self):
+        self.register()
+        link = self.link_in(mail.outbox[0])
+        almost = timezone.now().timestamp() + (TOKEN_MAX_AGE_DAYS * 24 * 60 * 60) - 60
+        with mock.patch("django.core.signing.time.time", return_value=almost):
+            self.assertEqual(self.client.get(link).status_code, 302)
+        self.assertTrue(self.profile().email_verified)
+
+    def test_a_link_stops_working_if_the_email_changes(self):
+        self.register()
+        link = self.link_in(mail.outbox[0])
+        user = get_user_model().objects.get(username="student")
+        user.email = "other@mavs.uta.edu"
+        user.save()
+        self.assertEqual(self.client.get(link).status_code, 400)
+        self.assertFalse(self.profile().email_verified)
+
+    def test_a_link_for_a_deleted_account_is_rejected(self):
+        self.register()
+        link = self.link_in(mail.outbox[0])
+        get_user_model().objects.get(username="student").delete()
+        self.assertEqual(self.client.get(link).status_code, 400)
+
+    def test_a_link_only_verifies_the_account_it_was_issued_for(self):
+        self.register("alice")
+        self.client.post("/accounts/logout/")
+        self.register("bob")
+        alice_link = self.link_in(mail.outbox[0])
+        self.client.get(alice_link)
+        self.assertTrue(self.profile("alice").email_verified)
+        self.assertFalse(self.profile("bob").email_verified)
+
+    def test_resend_sends_another_email_after_the_cooldown(self):
+        self.register()
+        Profile.objects.filter(user__username="student").update(
+            verification_sent_at=timezone.now() - timedelta(seconds=90)
+        )
+        self.assertRedirects(self.client.post("/verify/resend/"), "/verify/")
+        self.assertEqual(len(mail.outbox), 2)
+        # Both links are good. The old one isn't revoked by asking for a new one.
+        self.client.get(self.link_in(mail.outbox[0]))
+        self.assertTrue(self.profile().email_verified)
+
+    def test_resend_is_rate_limited(self):
+        self.register()
+        response = self.client.post("/verify/resend/", follow=True)
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertIn("Please wait", " ".join(str(m) for m in response.context["messages"]))
+
+    def test_holding_page_shows_the_wait(self):
+        self.register()
+        self.assertContains(self.client.get("/verify/"), "You can ask again in")
+
+    def test_resend_needs_login_and_post(self):
+        self.assertRedirects(self.client.post("/verify/resend/"), "/accounts/login/?next=/verify/resend/")
+        self.register()
+        self.assertEqual(self.client.get("/verify/resend/").status_code, 405)
+
+    def test_a_mail_failure_does_not_lose_the_account(self):
+        with mock.patch("planner.verification.send_mail", side_effect=smtplib.SMTPException("down")):
+            response = self.register()
+        self.assertRedirects(response, "/verify/")
+        self.assertTrue(get_user_model().objects.filter(username="student").exists())
+        # No email went out, so there's no cooldown standing in the way of a retry.
+        self.assertIsNone(self.profile().verification_sent_at)
+        self.client.post("/verify/resend/")
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_a_mail_failure_on_resend_is_reported(self):
+        self.register()
+        Profile.objects.filter(user__username="student").update(verification_sent_at=None)
+        with mock.patch("planner.verification.send_mail", side_effect=OSError("no route")):
+            response = self.client.post("/verify/resend/", follow=True)
+        self.assertIn("couldn't send", " ".join(str(m) for m in response.context["messages"]))
+
+    def test_verified_users_are_sent_away_from_the_holding_page(self):
+        self.client.force_login(make_user())
+        self.assertRedirects(self.client.get("/verify/"), "/dashboard/")
+        self.assertRedirects(self.client.post("/verify/resend/"), "/dashboard/")
+
+    def test_staff_are_not_held_back(self):
+        admin = get_user_model().objects.create_superuser("boss", "boss@example.com", "pw")
+        self.client.force_login(admin)
+        self.assertEqual(self.client.get("/dashboard/").status_code, 200)
+
+    def test_the_reminder_poll_is_not_redirected_for_unverified_users(self):
+        self.register()
+        response = self.client.get("/notifications/upcoming/")
+        self.assertEqual(response.json(), {"enabled": False, "reminders": []})
+
+    def test_the_uta_email_rule_still_applies(self):
+        response = self.register(email="me@gmail.com")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(len(mail.outbox), 0)
+        self.assertFalse(get_user_model().objects.filter(username="student").exists())
+
+    def test_the_demo_account_is_verified(self):
+        call_command("seed_catalog", demo=True, stdout=io.StringIO())
+        self.assertTrue(Profile.objects.get(user__username="demo").email_verified)
+
+
+class NavVisibilityTests(TestCase):
+    def test_unverified_users_do_not_see_app_links(self):
+        user = make_user(email_verified=False)
+        self.client.force_login(user)
+        response = self.client.get("/verify/")
+        self.assertNotContains(response, 'href="/calendar/"')
+        self.assertContains(response, "Sign out")
+
+    def test_verified_users_see_app_links(self):
+        self.client.force_login(make_user())
+        self.assertContains(self.client.get("/dashboard/"), 'href="/calendar/"')
+
+    def test_staff_without_a_profile_see_app_links(self):
+        admin = get_user_model().objects.create_superuser("boss", "boss@example.com", "pw")
+        self.client.force_login(admin)
+        self.assertContains(self.client.get("/dashboard/"), 'href="/calendar/"')

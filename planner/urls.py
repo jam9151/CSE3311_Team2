@@ -5,6 +5,9 @@ from . import views
 urlpatterns = [
     path("", views.home, name="home"),
     path("register/", views.register, name="register"),
+    path("verify/", views.verify_pending, name="verify_pending"),
+    path("verify/resend/", views.resend_verification, name="resend_verification"),
+    path("verify/<str:token>/", views.verify_email, name="verify_email"),
     path("dashboard/", views.dashboard, name="dashboard"),
     # Discover and media details
     path("discover/", views.discover, name="discover"),

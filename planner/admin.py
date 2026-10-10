@@ -36,5 +36,10 @@ class ReviewAdmin(admin.ModelAdmin):
     list_filter = ["rating"]
 
 
-admin.site.register(Profile)
+@admin.register(Profile)
+class ProfileAdmin(admin.ModelAdmin):
+    list_display = ["user", "email_verified", "day_start", "day_end", "notify_enabled"]
+    list_filter = ["email_verified", "notify_enabled"]
+    search_fields = ["user__username", "user__email"]
+
 admin.site.register(Commitment)

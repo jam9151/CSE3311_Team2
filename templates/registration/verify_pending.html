@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Confirm your email · MediaFlow{% endblock %}
+
+{% block content %}
+<section class="card mx-auto my-8 max-w-md">
+  <p class="eyebrow">One more step</p>
+  <h1 class="text-2xl font-bold tracking-tight">Check your email</h1>
+  <p class="mt-2 text-sm text-muted">
+    We sent a confirmation link to <strong class="text-ink">{{ email }}</strong>.
+    Open it and you're in. The link works for a few days.
+  </p>
+  {% if console_email %}
+    <p class="mt-3 rounded-lg border border-accent/30 bg-accent/10 px-3.5 py-2.5 text-sm">
+      This copy of MediaFlow isn't connected to a mail server, so the email is printed in the
+      terminal where the server is running.
+    </p>
+  {% endif %}
+
+  <form class="mt-5" method="post" action="{% url 'resend_verification' %}">
+    {% csrf_token %}
+    <button class="btn btn-secondary">Send it again</button>
+    {% if wait %}
+      <span class="ml-2 text-sm text-muted">You can ask again in {{ wait }} second{{ wait|pluralize }}.</span>
+    {% endif %}
+  </form>
+  <p class="mt-4 text-sm text-muted">Wrong address? Sign out and create the account again.</p>
+</section>
+{% endblock %}

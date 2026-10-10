@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Link not valid · MediaFlow{% endblock %}
+
+{% block content %}
+<section class="card mx-auto my-8 max-w-md">
+  <h1 class="text-2xl font-bold tracking-tight">That link didn't work</h1>
+  <p class="mt-2 text-sm text-muted">
+    It may have expired, been copied incompletely, or belong to an account that no longer exists.
+  </p>
+  <p class="mt-4">
+    {% if user.is_authenticated %}
+      <a class="btn" href="{% url 'verify_pending' %}">Get a new link</a>
+    {% else %}
+      <a class="btn" href="{% url 'login' %}">Sign in to get a new link</a>
+    {% endif %}
+  </p>
+</section>
+{% endblock %}

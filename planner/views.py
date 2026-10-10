@@ -1,6 +1,7 @@
 from datetime import date as date_cls
 from datetime import datetime, timedelta
 
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login
 from django.contrib.auth.decorators import login_required
@@ -31,6 +32,7 @@ from .services import (
     total_free_minutes,
     upcoming_reminders,
 )
+from .verification import is_verified, read_token, seconds_until_resend, send_verification_email
 
 
 def _parse_date(raw, fallback=None):
@@ -55,11 +57,75 @@ def register(request):
     if request.method == "POST" and form.is_valid():
         user = form.save()
         login(request, user)
-        # Straight to the schedule, not the dashboard -- with no commitments
-        # entered there's no free time yet and the dashboard looks broken.
-        messages.success(request, "Welcome to MediaFlow. Start by telling us when you are busy.")
-        return redirect("weekly_schedule")
+        # Signed in straight away so the holding page knows who to resend to,
+        # but the middleware keeps them there until the link is opened.
+        if send_verification_email(request, user):
+            messages.success(request, f"Account created. We sent a confirmation link to {user.email}.")
+        else:
+            messages.warning(
+                request, "Account created, but we couldn't send the confirmation email. Use the button below to retry."
+            )
+        return redirect("verify_pending")
     return render(request, "registration/register.html", {"form": form})
+
+
+@login_required
+def verify_pending(request):
+    if is_verified(request.user):
+        return redirect("dashboard")
+    profile, _ = Profile.objects.get_or_create(user=request.user)
+    return render(
+        request,
+        "registration/verify_pending.html",
+        {
+            "email": request.user.email,
+            "wait": seconds_until_resend(profile),
+            "console_email": settings.EMAIL_BACKEND.endswith("console.EmailBackend"),
+        },
+    )
+
+
+def verify_email(request, token):
+    """The link in the email. Works signed in or out, the token says who it is for."""
+    user = read_token(token)
+    if user is None:
+        return render(request, "registration/verify_invalid.html", status=400)
+
+    profile, _ = Profile.objects.get_or_create(user=user)
+    newly_verified = not profile.email_verified
+    if newly_verified:
+        profile.email_verified = True
+        profile.save(update_fields=["email_verified"])
+        messages.success(request, "Email confirmed.")
+    else:
+        messages.info(request, "That email was already confirmed.")
+
+    if not request.user.is_authenticated:
+        messages.info(request, "Sign in to continue.")
+        return redirect("login")
+    if request.user == user:
+        if newly_verified:
+            # Straight to the schedule, not the dashboard -- with no commitments
+            # entered there's no free time yet and the dashboard looks broken.
+            messages.success(request, "Welcome to MediaFlow. Start by telling us when you are busy.")
+        return redirect("weekly_schedule")
+    return redirect("dashboard")
+
+
+@login_required
+@require_POST
+def resend_verification(request):
+    if is_verified(request.user):
+        return redirect("dashboard")
+    profile, _ = Profile.objects.get_or_create(user=request.user)
+    wait = seconds_until_resend(profile)
+    if wait:
+        messages.info(request, f"Please wait {wait} second{'s' if wait != 1 else ''} before asking for another email.")
+    elif send_verification_email(request, request.user):
+        messages.success(request, f"Sent a new confirmation link to {request.user.email}.")
+    else:
+        messages.error(request, "We couldn't send the email right now. Please try again in a minute.")
+    return redirect("verify_pending")
 
 
 @login_required

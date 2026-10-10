@@ -1,0 +1,10 @@
+{% autoescape off %}Hi {{ user.username }},
+
+Confirm your email address to start using MediaFlow:
+
+{{ link }}
+
+The link works for {{ days }} days. If you didn't sign up, you can ignore this message.
+
+MediaFlow, CSE 3311 Team 2
+{% endautoescape %}

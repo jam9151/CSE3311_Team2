@@ -29,7 +29,9 @@ having to enter one every time you want to try the scheduler:
 
 - user `demo`, password `mediaflow123`
 
-Signing up for real needs a `@mavs.uta.edu` address. Admin is at `/admin/`
+Signing up for real needs a `@mavs.uta.edu` address, and you have to confirm it
+before the app opens up (see Email below). The demo account is already
+confirmed. Admin is at `/admin/`
 (make a superuser with `python manage.py createsuperuser`).
 
 Tests: `python manage.py test`
@@ -72,7 +74,7 @@ mermaid diagrams are drawn by a real browser.
 
 | Feature | Status |
 | --- | --- |
-| User accounts | done, `@mavs.uta.edu` only |
+| User accounts | done, `@mavs.uta.edu` only, confirmed by email link |
 | Media search | done, filter by type / genre / length |
 | Media details | done, shows whether it fits your free time today |
 | Visual calendar | done, month grid + day panel |
@@ -83,6 +85,29 @@ mermaid diagrams are drawn by a real browser.
 | Plan the week | done, one click plans the next 7 days, accept one by one or all at once |
 | Review manager | done |
 | Notifications | partly done, reminders while a tab is open, no background push yet |
+
+## Email
+
+New accounts get a confirmation link by email and are held on a "check your
+email" page until they open it. Links are signed, last 3 days, and stop working
+if the address changes. "Send it again" is limited to once a minute. Accounts
+that existed before this was added were marked confirmed by the migration, and
+staff accounts are never held back.
+
+Nothing needs a mail server to run locally. By default Django prints the email
+in the terminal where `runserver` is running, so copy the link from there. To
+send real mail, set these environment variables before starting the server:
+
+```powershell
+$env:EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+$env:EMAIL_HOST = "smtp.example.com"
+$env:EMAIL_HOST_USER = "..."
+$env:EMAIL_HOST_PASSWORD = "..."
+$env:DEFAULT_FROM_EMAIL = "MediaFlow <noreply@example.com>"
+```
+
+`EMAIL_PORT` (587) and `EMAIL_USE_TLS` (true) have defaults. To confirm
+someone by hand, tick `email_verified` on their profile in the admin.
 
 ## Reminders
 
@@ -136,7 +161,9 @@ planner/
   services.py   free time detection + suggestion scoring
   views.py
   forms.py      includes the mavs.uta.edu signup check
-  tests.py      75 tests, mostly on the scheduling
+  verification.py  signed email links, sending, resend limit
+  middleware.py    holds unverified users on the confirm page
+  tests.py      104 tests, mostly on the scheduling
   management/commands/seed_catalog.py
 templates/
 static/js/reminders.js   polls for upcoming sessions and shows notifications
