@@ -33,6 +33,8 @@ urlpatterns = [
     path("suggestions/plan-week/", views.plan_week, name="plan_week"),
     path("suggestions/accept-week/", views.accept_week, name="accept_week"),
     path("suggestions/<int:pk>/<str:action>/", views.respond_to_suggestion, name="respond_to_suggestion"),
+    # Progress
+    path("progress/", views.stats, name="stats"),
     # Reviews
     path("reviews/", views.reviews, name="reviews"),
     path("reviews/<int:pk>/write/", views.write_review, name="write_review"),

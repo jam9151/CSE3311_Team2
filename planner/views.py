@@ -28,6 +28,7 @@ from .services import (
     free_intervals,
     humanize_minutes,
     month_grid,
+    progress_stats,
     suggest_for_day,
     suggest_for_week,
     total_free_minutes,
@@ -597,6 +598,11 @@ def calendar(request):
             "weekday_names": ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"],
         },
     )
+
+
+@login_required
+def stats(request):
+    return render(request, "planner/stats.html", {"stats": progress_stats(request.user)})
 
 
 @login_required

@@ -30,6 +30,16 @@
   --color-tv: #a6c8f0;
   --color-book: #f2c14e;
   --color-game: #5fd4a0;
+
+  /* The same four types as chart fills on the progress page. The pill colours
+     above are pale and too alike to tell apart as bars, so these are the
+     reference palette's first four slots stepped for a dark surface. They pass
+     the palette validator on --color-surface: lightness band, chroma, colour
+     blindness separation and 3:1 contrast. Fixed per type, never reassigned. */
+  --color-viz-movie: #3987e5;
+  --color-viz-tv: #d95926;
+  --color-viz-book: #199e70;
+  --color-viz-game: #c98500;
 }
 
 /* Django renders form fields itself ({{ form.as_p }}), so we can't put

@@ -4,13 +4,16 @@ Kept out of views.py so it can be tested on its own, and so it's easy to swap
 the scoring for something smarter later without touching the pages.
 """
 
+import math
+from collections import Counter
 from dataclasses import dataclass
 from datetime import date as date_cls
 from datetime import datetime, time, timedelta
 
+from django.db.models import Avg, Count, F
 from django.utils import timezone
 
-from .models import MIN_USABLE_MINUTES, BacklogItem, Suggestion
+from .models import MIN_USABLE_MINUTES, BacklogItem, MediaType, Suggestion
 
 # How long a rejection keeps counting against an item.
 REJECTION_MEMORY_DAYS = 14
@@ -400,3 +403,145 @@ def month_grid(user, year, month):
     if all(not cell["in_month"] for cell in weeks[-1]):
         weeks.pop()
     return weeks
+
+
+# ------------------------------------------------------------ progress
+
+# Fixed, so a type keeps its place and its colour on the progress page whatever
+# the numbers are.
+MEDIA_ORDER = [MediaType.MOVIE, MediaType.TV, MediaType.BOOK, MediaType.GAME]
+
+# Axis steps in minutes, smallest first.
+_AXIS_STEPS = [15, 30, 60, 120, 180, 240, 360, 480, 720, 960]
+
+
+def _axis(top):
+    """(step, maximum) for a chart axis: round numbers, at most four steps."""
+    if top <= 0:
+        return 15, 60
+    for step in _AXIS_STEPS:
+        if math.ceil(top / step) <= 4:
+            return step, math.ceil(top / step) * step
+    step = _AXIS_STEPS[-1]
+    return step, math.ceil(top / step) * step
+
+
+def _streaks(active_days, today):
+    """(current, best) runs of consecutive days with something logged.
+
+    The current run still counts if today is empty but yesterday wasn't, so it
+    doesn't read zero first thing in the morning.
+    """
+    cursor = today if today in active_days else today - timedelta(days=1)
+    current = 0
+    while cursor in active_days:
+        current += 1
+        cursor -= timedelta(days=1)
+
+    best = run = 0
+    previous = None
+    for day in sorted(active_days):
+        run = run + 1 if previous is not None and day - previous == timedelta(days=1) else 1
+        best = max(best, run)
+        previous = day
+    return current, best
+
+
+def progress_stats(user, today=None, days=30):
+    """Numbers for the progress page, all from sessions marked done.
+
+    Time comes from Suggestion rows with status done, on the day they were
+    marked done. Minutes typed into a backlog item by hand have no date, so
+    they can't be placed on a day and are not counted here.
+    """
+    today = today or timezone.localdate()
+    month_start = today.replace(day=1)
+
+    per_day = Counter()
+    month_minutes_by_type = Counter()
+    month_sessions = 0
+    total_minutes = 0
+    done = user.suggestions.filter(status=Suggestion.Status.DONE).values_list(
+        "responded_at", "date", "minutes", "backlog_item__media_type"
+    )
+    for responded_at, planned_date, minutes, media_type in done:
+        day = timezone.localtime(responded_at).date() if responded_at else planned_date
+        if day > today:
+            continue
+        per_day[day] += minutes
+        total_minutes += minutes
+        if day >= month_start:
+            month_minutes_by_type[media_type] += minutes
+            month_sessions += 1
+
+    current_streak, best_streak = _streaks({day for day, minutes in per_day.items() if minutes > 0}, today)
+
+    # The daily chart.
+    window = [today - timedelta(days=offset) for offset in range(days - 1, -1, -1)]
+    top = max((per_day[day] for day in window), default=0)
+    step, axis_max = _axis(top)
+    best_day = max(window, key=lambda day: (per_day[day], -window.index(day))) if top else None
+    daily = []
+    for index, day in enumerate(window):
+        minutes = per_day[day]
+        daily.append(
+            {
+                "date": day,
+                "minutes": minutes,
+                "label": humanize_minutes(minutes) if minutes else "Nothing logged",
+                "height": round(minutes / axis_max * 100, 1),
+                "is_today": day == today,
+                "is_best": day == best_day,
+                # Keeps the best-day label inside the card at either end.
+                "label_align": "left" if index < 3 else "right" if index >= days - 3 else "center",
+            }
+        )
+    ticks = [
+        {"minutes": value, "label": humanize_minutes(value) if value else "0", "bottom": round(value / axis_max * 100, 1)}
+        for value in range(0, axis_max + 1, step)
+    ]
+
+    # Finished things.
+    completed = user.backlog_items.filter(status=BacklogItem.Status.COMPLETED)
+    finished_this_month = Counter()
+    finished_total = 0
+    for completed_at, media_type in completed.values_list("completed_at", "media_type"):
+        finished_total += 1
+        if completed_at and timezone.localtime(completed_at).date() >= month_start:
+            finished_this_month[media_type] += 1
+
+    month_minutes = sum(month_minutes_by_type.values())
+    by_type = [
+        {
+            "key": media_type.value,
+            "label": media_type.label,
+            "minutes": month_minutes_by_type[media_type.value],
+            "time": humanize_minutes(month_minutes_by_type[media_type.value]) if month_minutes_by_type[media_type.value] else "",
+            "percent": round(month_minutes_by_type[media_type.value] / month_minutes * 100, 1) if month_minutes else 0,
+            "finished": finished_this_month[media_type.value],
+        }
+        for media_type in MEDIA_ORDER
+    ]
+
+    reviews = user.reviews.aggregate(average=Avg("rating"), count=Count("id"))
+    return {
+        "today": today,
+        "month_minutes": month_minutes,
+        "month_time": humanize_minutes(month_minutes),
+        "month_sessions": month_sessions,
+        "total_minutes": total_minutes,
+        "total_time": humanize_minutes(total_minutes),
+        "finished_this_month": sum(finished_this_month.values()),
+        "finished_total": finished_total,
+        "current_streak": current_streak,
+        "best_streak": best_streak,
+        "average_rating": round(reviews["average"], 1) if reviews["average"] is not None else None,
+        "review_count": reviews["count"],
+        "daily": daily,
+        "logged_days": [entry for entry in reversed(daily) if entry["minutes"]],
+        "ticks": ticks,
+        "has_chart_data": top > 0,
+        "by_type": by_type,
+        "recent_finished": list(completed.order_by(F("completed_at").desc(nulls_last=True))[:5]),
+        "in_progress": list(user.backlog_items.filter(status=BacklogItem.Status.IN_PROGRESS)[:5]),
+    }

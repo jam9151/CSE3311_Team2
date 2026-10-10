@@ -38,11 +38,13 @@ from .catalog_import import (
     tidy_description,
 )
 from .forms import RegisterForm
-from .models import BacklogItem, CatalogItem, Commitment, MediaType, Profile, RecurringBlock, Suggestion
+from .models import BacklogItem, CatalogItem, Commitment, MediaType, Profile, RecurringBlock, Review, Suggestion
 from .services import (
     free_intervals,
     humanize_minutes,
+    _axis,
     month_grid,
+    progress_stats,
     suggest_for_day,
     suggest_for_week,
     total_free_minutes,
@@ -1734,3 +1736,282 @@ class DiscoverPagingTests(TestCase):
         for name in ("TMDB", "RAWG", "Open Library"):
             self.assertContains(response, name)
         self.assertContains(response, "not endorsed or certified by TMDB")
+
+
+# ---------------------------------------------------------------- progress
+
+
+def local(year, month, day, hour=12, minute=0):
+    """An aware datetime in the project's time zone."""
+    return timezone.make_aware(datetime(year, month, day, hour, minute))
+
+
+class AxisTests(TestCase):
+    def test_round_steps_and_at_most_four_of_them(self):
+        self.assertEqual(_axis(0), (15, 60))
+        self.assertEqual(_axis(45), (15, 45))
+        self.assertEqual(_axis(90), (30, 90))
+        self.assertEqual(_axis(130), (60, 180))
+        self.assertEqual(_axis(500), (180, 540))
+
+    def test_a_huge_total_still_gets_an_axis(self):
+        step, top = _axis(5000)
+        self.assertEqual(step, 960)
+        self.assertGreaterEqual(top, 5000)
+
+    def test_the_axis_always_covers_the_data(self):
+        for value in range(0, 3000, 37):
+            with self.subTest(value=value):
+                self.assertGreaterEqual(_axis(value)[1], value)
+
+
+class ProgressStatsTests(TestCase):
+    today = date(2026, 10, 6)  # a Tuesday
+
+    def setUp(self):
+        self.user = make_user()
+
+    def done(self, minutes, when=None, media_type=MediaType.BOOK, user=None, **extra):
+        """A session marked done at `when` (local), on a fresh backlog item."""
+        user = user or self.user
+        item = BacklogItem.objects.create(
+            user=user, title=f"Item {BacklogItem.objects.count()}", media_type=media_type, estimated_minutes=9999
+        )
+        planned = when.date() if when else self.today
+        return Suggestion.objects.create(
+            user=user, backlog_item=item, date=extra.pop("date", planned), start_time=time(19), end_time=time(20),
+            minutes=minutes, status=extra.pop("status", Suggestion.Status.DONE), responded_at=when, **extra,
+        )
+
+    def stats(self, **kwargs):
+        return progress_stats(self.user, today=self.today, **kwargs)
+
+    def test_a_new_user_has_zeros_and_an_empty_chart(self):
+        stats = self.stats()
+        self.assertEqual((stats["month_minutes"], stats["current_streak"], stats["best_streak"]), (0, 0, 0))
+        self.assertEqual((stats["finished_total"], stats["review_count"]), (0, 0))
+        self.assertIsNone(stats["average_rating"])
+        self.assertFalse(stats["has_chart_data"])
+        self.assertEqual(stats["recent_finished"], [])
+        self.assertEqual(stats["in_progress"], [])
+
+    def test_the_chart_covers_thirty_days_ending_today(self):
+        daily = self.stats()["daily"]
+        self.assertEqual(len(daily), 30)
+        self.assertEqual((daily[0]["date"], daily[-1]["date"]), (self.today - timedelta(days=29), self.today))
+        self.assertTrue(daily[-1]["is_today"])
+        self.assertEqual(sum(1 for entry in daily if entry["is_today"]), 1)
+
+    def test_month_total_uses_the_day_it_was_done_in_local_time(self):
+        self.done(60, local(2026, 10, 1, 0, 30))    # just into October, local
+        self.done(45, local(2026, 9, 30, 23, 30))   # still September here, October in UTC
+        self.done(30, local(2026, 10, 6, 18))
+        stats = self.stats()
+        self.assertEqual((stats["month_minutes"], stats["month_sessions"]), (90, 2))
+        self.assertEqual(stats["total_minutes"], 135)
+        self.assertEqual(stats["month_time"], "1h 30m")
+
+    def test_a_session_with_no_timestamp_falls_back_to_its_planned_day(self):
+        self.done(50, when=None, date=date(2026, 10, 3))
+        self.assertEqual(self.stats()["month_minutes"], 50)
+
+    def test_nothing_dated_after_today_counts(self):
+        self.done(50, when=None, date=date(2026, 10, 20))
+        stats = self.stats()
+        self.assertEqual((stats["month_minutes"], stats["total_minutes"]), (0, 0))
+
+    def test_only_sessions_marked_done_count(self):
+        for status in [Suggestion.Status.PENDING, Suggestion.Status.ACCEPTED, Suggestion.Status.REJECTED]:
+            self.done(60, local(2026, 10, 6), status=status)
+        self.assertEqual(self.stats()["month_minutes"], 0)
+
+    def test_other_peoples_sessions_are_not_counted(self):
+        self.done(500, local(2026, 10, 6), user=make_user("mallory"))
+        self.assertEqual(self.stats()["month_minutes"], 0)
+
+    def test_streak_and_best_streak(self):
+        for day in (4, 5, 6):
+            self.done(30, local(2026, 10, day))
+        for day in range(20, 26):
+            self.done(30, local(2026, 9, day))
+        stats = self.stats()
+        self.assertEqual((stats["current_streak"], stats["best_streak"]), (3, 6))
+
+    def test_an_empty_today_does_not_end_the_streak(self):
+        for day in (4, 5):
+            self.done(30, local(2026, 10, day))
+        self.assertEqual(self.stats()["current_streak"], 2)
+
+    def test_a_gap_ends_the_streak(self):
+        self.done(30, local(2026, 10, 3))
+        self.done(30, local(2026, 10, 5))
+        stats = self.stats()
+        self.assertEqual((stats["current_streak"], stats["best_streak"]), (1, 1))
+
+    def test_two_days_without_anything_means_no_current_streak(self):
+        self.done(30, local(2026, 10, 4))
+        stats = self.stats()
+        self.assertEqual((stats["current_streak"], stats["best_streak"]), (0, 1))
+
+    def test_several_sessions_in_a_day_are_one_streak_day_and_add_up(self):
+        self.done(30, local(2026, 10, 6, 9))
+        self.done(45, local(2026, 10, 6, 20))
+        stats = self.stats()
+        self.assertEqual(stats["current_streak"], 1)
+        self.assertEqual(stats["daily"][-1]["minutes"], 75)
+
+    def test_by_type_is_in_a_fixed_order_with_shares_of_the_month(self):
+        self.done(120, local(2026, 10, 2), media_type=MediaType.MOVIE)
+        self.done(60, local(2026, 10, 3), media_type=MediaType.BOOK)
+        by_type = self.stats()["by_type"]
+        self.assertEqual([t["key"] for t in by_type], ["movie", "tv", "book", "game"])
+        self.assertEqual([t["minutes"] for t in by_type], [120, 0, 60, 0])
+        self.assertEqual([t["percent"] for t in by_type], [66.7, 0, 33.3, 0])
+        self.assertEqual(by_type[0]["time"], "2h")
+        self.assertEqual(by_type[1]["time"], "")
+
+    def test_by_type_ignores_last_month(self):
+        self.done(120, local(2026, 9, 15), media_type=MediaType.MOVIE)
+        self.assertEqual(sum(t["minutes"] for t in self.stats()["by_type"]), 0)
+
+    def test_chart_heights_are_scaled_to_the_axis(self):
+        self.done(90, local(2026, 10, 6))
+        self.done(45, local(2026, 10, 5))
+        stats = self.stats()
+        self.assertEqual([t["label"] for t in stats["ticks"]], ["0", "30 min", "1h", "1h 30m"])
+        self.assertEqual([t["bottom"] for t in stats["ticks"]], [0, 33.3, 66.7, 100])
+        self.assertEqual((stats["daily"][-1]["height"], stats["daily"][-2]["height"]), (100, 50))
+        self.assertTrue(stats["has_chart_data"])
+
+    def test_best_day_is_flagged_once_and_ties_go_to_the_earlier_day(self):
+        self.done(60, local(2026, 10, 1))
+        self.done(60, local(2026, 10, 6))
+        best = [entry for entry in self.stats()["daily"] if entry["is_best"]]
+        self.assertEqual([entry["date"] for entry in best], [date(2026, 10, 1)])
+
+    def test_the_best_day_label_stays_inside_the_card(self):
+        for day, expected in [(date(2026, 9, 8), "left"), (date(2026, 9, 25), "center"), (self.today, "right")]:
+            with self.subTest(day=day):
+                Suggestion.objects.all().delete()
+                self.done(60, local(day.year, day.month, day.day))
+                best = next(entry for entry in self.stats()["daily"] if entry["is_best"])
+                self.assertEqual(best["label_align"], expected)
+
+    def test_logged_days_are_newest_first_and_skip_quiet_days(self):
+        self.done(30, local(2026, 10, 1))
+        self.done(30, local(2026, 10, 5))
+        self.assertEqual([e["date"] for e in self.stats()["logged_days"]], [date(2026, 10, 5), date(2026, 10, 1)])
+
+    def test_finished_counts_split_this_month_from_all_time(self):
+        def finish(title, when):
+            return BacklogItem.objects.create(
+                user=self.user, title=title, media_type=MediaType.MOVIE, estimated_minutes=100,
+                status=BacklogItem.Status.COMPLETED, completed_at=when,
+            )
+        finish("This month", local(2026, 10, 2))
+        finish("Last month", local(2026, 9, 20))
+        finish("Undated", None)
+        stats = self.stats()
+        self.assertEqual((stats["finished_this_month"], stats["finished_total"]), (1, 3))
+        self.assertEqual([i.title for i in stats["recent_finished"]], ["This month", "Last month", "Undated"])
+        self.assertEqual(stats["by_type"][0]["finished"], 1)
+
+    def test_recently_finished_is_capped_at_five(self):
+        for number in range(8):
+            BacklogItem.objects.create(
+                user=self.user, title=f"Done {number}", media_type=MediaType.BOOK, estimated_minutes=100,
+                status=BacklogItem.Status.COMPLETED, completed_at=local(2026, 10, 1) + timedelta(hours=number),
+            )
+        recent = self.stats()["recent_finished"]
+        self.assertEqual(len(recent), 5)
+        self.assertEqual(recent[0].title, "Done 7")
+
+    def test_average_rating(self):
+        for rating in (5, 4):
+            item = BacklogItem.objects.create(
+                user=self.user, title=f"R{rating}", media_type=MediaType.BOOK, estimated_minutes=100
+            )
+            Review.objects.create(user=self.user, backlog_item=item, rating=rating)
+        stats = self.stats()
+        self.assertEqual((stats["average_rating"], stats["review_count"]), (4.5, 2))
+
+    def test_in_progress_items_are_listed(self):
+        BacklogItem.objects.create(
+            user=self.user, title="Midway", media_type=MediaType.BOOK, estimated_minutes=100,
+            minutes_completed=40, status=BacklogItem.Status.IN_PROGRESS,
+        )
+        BacklogItem.objects.create(user=self.user, title="Not started", media_type=MediaType.BOOK, estimated_minutes=100)
+        self.assertEqual([i.title for i in self.stats()["in_progress"]], ["Midway"])
+
+
+class ProgressViewTests(TestCase):
+    def setUp(self):
+        self.user = make_user()
+        self.client.force_login(self.user)
+
+    def log(self, minutes, user=None, media_type=MediaType.BOOK, title="Dune"):
+        user = user or self.user
+        item = BacklogItem.objects.create(user=user, title=title, media_type=media_type, estimated_minutes=9999)
+        return Suggestion.objects.create(
+            user=user, backlog_item=item, date=timezone.localdate(), start_time=time(19), end_time=time(20),
+            minutes=minutes, status=Suggestion.Status.DONE, responded_at=timezone.now(),
+        )
+
+    def test_needs_login(self):
+        self.client.logout()
+        self.assertRedirects(self.client.get("/progress/"), "/accounts/login/?next=/progress/")
+
+    def test_new_user_sees_empty_states_not_errors(self):
+        response = self.client.get("/progress/")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Nothing logged in the last 30 days")
+        self.assertContains(response, "Nothing logged this month yet")
+        self.assertContains(response, "No reviews yet")
+        self.assertNotContains(response, "Show as a table")
+
+    def test_the_nav_links_to_it(self):
+        self.assertContains(self.client.get("/dashboard/"), 'href="/progress/"')
+
+    def test_shows_the_numbers_the_chart_and_the_table(self):
+        self.log(95)
+        response = self.client.get("/progress/")
+        self.assertContains(response, "1h 35m")
+        self.assertContains(response, "1 session<")
+        self.assertContains(response, "Show as a table")
+        self.assertContains(response, 'data-tip-value="1h 35m"')
+        self.assertContains(response, 'id="chart-tip"')
+        self.assertContains(response, "js/stats.js")
+
+    def test_every_media_type_is_in_the_legend_even_with_no_time(self):
+        self.log(60, media_type=MediaType.GAME)
+        response = self.client.get("/progress/")
+        for label in ("Movie", "TV series", "Book", "Game"):
+            self.assertContains(response, label)
+        self.assertContains(response, "bg-viz-game")
+        self.assertContains(response, "Nothing logged")
+
+    def test_a_types_colour_is_fixed_whatever_else_is_there(self):
+        self.log(60, media_type=MediaType.BOOK)
+        one = self.client.get("/progress/").content.decode()
+        self.log(60, media_type=MediaType.MOVIE, title="Arrival")
+        two = self.client.get("/progress/").content.decode()
+        self.assertEqual(one.count("bg-viz-book"), 2)   # bar segment and legend swatch
+        self.assertEqual(two.count("bg-viz-book"), 2)
+        self.assertGreaterEqual(two.count("bg-viz-movie"), 2)
+
+    def test_other_users_time_is_not_shown(self):
+        self.log(999, user=make_user("mallory"))
+        response = self.client.get("/progress/")
+        self.assertNotContains(response, "16h 39m")
+        self.assertContains(response, "Nothing logged in the last 30 days")
+
+    def test_recently_finished_links_to_a_review(self):
+        item = BacklogItem.objects.create(
+            user=self.user, title="Arrival", media_type=MediaType.MOVIE, estimated_minutes=116,
+            status=BacklogItem.Status.COMPLETED, completed_at=timezone.now(),
+        )
+        self.assertContains(self.client.get("/progress/"), f"/reviews/{item.pk}/write/")
+
+    def test_unverified_users_are_held_back_like_everywhere_else(self):
+        self.client.force_login(make_user("newbie", email_verified=False))
+        self.assertRedirects(self.client.get("/progress/"), "/verify/", fetch_redirect_response=False)

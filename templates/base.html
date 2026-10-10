@@ -24,6 +24,7 @@
         <a href="{% url 'discover' %}" class="nav-link {% if page == 'discover' %}nav-link-active{% endif %}">Discover</a>
         <a href="{% url 'weekly_schedule' %}" class="nav-link {% if page == 'weekly_schedule' %}nav-link-active{% endif %}">My week</a>
         <a href="{% url 'reviews' %}" class="nav-link {% if page == 'reviews' %}nav-link-active{% endif %}">Reviews</a>
+        <a href="{% url 'stats' %}" class="nav-link {% if page == 'stats' %}nav-link-active{% endif %}">Progress</a>
       </div>
       {% endif %}
       <form class="ml-auto flex items-center gap-3" action="{% url 'logout' %}" method="post">

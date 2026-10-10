@@ -1,0 +1,177 @@
+{% extends "base.html" %}
+{% load l10n static %}
+{% block title %}Progress · MediaFlow{% endblock %}
+
+{% block content %}
+<header class="mb-5">
+  <p class="eyebrow">Progress</p>
+  <h1 class="text-3xl font-bold tracking-tight">How it's going</h1>
+  <p class="text-muted">Time comes from the sessions you mark done.</p>
+</header>
+
+<div class="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+  <div class="card">
+    <div class="text-2xl font-bold tracking-tight">{{ stats.month_time }}</div>
+    <div class="text-xs uppercase tracking-wider text-muted">Logged this month</div>
+    <p class="mt-1 text-xs text-muted">{{ stats.month_sessions }} session{{ stats.month_sessions|pluralize }}</p>
+  </div>
+  <div class="card">
+    <div class="text-2xl font-bold tracking-tight">{{ stats.finished_this_month }}</div>
+    <div class="text-xs uppercase tracking-wider text-muted">Finished this month</div>
+    <p class="mt-1 text-xs text-muted">{{ stats.finished_total }} overall</p>
+  </div>
+  <div class="card">
+    <div class="text-2xl font-bold tracking-tight">{{ stats.current_streak }} day{{ stats.current_streak|pluralize }}</div>
+    <div class="text-xs uppercase tracking-wider text-muted">Current streak</div>
+    <p class="mt-1 text-xs text-muted">Best: {{ stats.best_streak }} day{{ stats.best_streak|pluralize }}</p>
+  </div>
+  <div class="card">
+    <div class="text-2xl font-bold tracking-tight">{% if stats.average_rating is not None %}{{ stats.average_rating }}<span class="text-base font-normal text-muted"> / 5</span>{% else %}&mdash;{% endif %}</div>
+    <div class="text-xs uppercase tracking-wider text-muted">Average rating</div>
+    <p class="mt-1 text-xs text-muted">{% if stats.review_count %}{{ stats.review_count }} review{{ stats.review_count|pluralize }}{% else %}No reviews yet{% endif %}</p>
+  </div>
+</div>
+
+<section class="card mb-5">
+  <div class="card-head">
+    <h2>Time logged, last 30 days</h2>
+    <span class="text-sm text-muted">{{ stats.total_time }} in total</span>
+  </div>
+
+  {% if stats.has_chart_data %}
+    <div class="flex gap-2">
+      <div class="relative h-40 w-12 shrink-0 text-xs tabular-nums text-muted" aria-hidden="true">
+        {% for tick in stats.ticks %}
+          <span class="absolute right-0 translate-y-1/2" style="bottom: {{ tick.bottom|unlocalize }}%">{{ tick.label }}</span>
+        {% endfor %}
+      </div>
+      <div class="relative h-40 flex-1">
+        {% for tick in stats.ticks %}
+          <div class="absolute inset-x-0 border-t border-line" style="bottom: {{ tick.bottom|unlocalize }}%"></div>
+        {% endfor %}
+        <div class="absolute inset-0 flex gap-0.5">
+          {% for day in stats.daily %}
+            <div class="group relative flex h-full min-w-0 flex-1 items-end justify-center rounded-sm focus:outline focus:outline-2 focus:outline-ink/40"
+                 role="img" data-tip="{{ day.date|date:'D, M j' }}" data-tip-value="{{ day.label }}"
+                 aria-label="{{ day.date|date:'M j' }}: {{ day.label }}"{% if day.minutes %} tabindex="0"{% endif %}>
+              {% if day.minutes %}
+                <div class="w-full max-w-6 rounded-t bg-accent group-hover:brightness-125 group-focus:brightness-125" style="height: {{ day.height|unlocalize }}%"></div>
+                {% if day.is_best %}
+                  <span class="absolute whitespace-nowrap text-xs text-ink {% if day.label_align == 'left' %}left-0{% elif day.label_align == 'right' %}right-0{% else %}left-1/2 -translate-x-1/2{% endif %}"
+                        style="bottom: calc({{ day.height|unlocalize }}% + 4px)">{{ day.label }}</span>
+                {% endif %}
+              {% endif %}
+            </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+    <div class="ml-14 mt-1.5 flex justify-between text-xs text-muted" aria-hidden="true">
+      <span>{{ stats.daily.0.date|date:"M j" }}</span>
+      <span>{{ stats.daily.14.date|date:"M j" }}</span>
+      <span>Today</span>
+    </div>
+
+    <details class="mt-4 text-sm">
+      <summary class="cursor-pointer text-muted">Show as a table</summary>
+      <table class="mt-2 w-full max-w-sm text-left">
+        <thead class="text-xs uppercase tracking-wider text-muted">
+          <tr><th class="py-1 pr-4 font-medium">Day</th><th class="py-1 font-medium">Time logged</th></tr>
+        </thead>
+        <tbody>
+          {% for day in stats.logged_days %}
+            <tr class="border-t border-line">
+              <td class="py-1 pr-4">{{ day.date|date:"D, M j" }}</td>
+              <td class="py-1">{{ day.label }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+      <p class="mt-2 text-xs text-muted">Days with nothing logged are left out.</p>
+    </details>
+  {% else %}
+    <p class="empty">Nothing logged in the last 30 days. Mark a planned session done and it will show up here.</p>
+  {% endif %}
+  <p class="mt-3 text-xs text-muted">Minutes you type into a backlog item by hand aren't counted, because they have no date.</p>
+</section>
+
+<div class="grid items-start gap-5 lg:grid-cols-2">
+  <section class="card">
+    <div class="card-head"><h2>Where the time went this month</h2></div>
+    {% if stats.month_minutes %}
+      <div class="flex h-4 gap-0.5" role="group" aria-label="Share of this month's time by type">
+        {% for type in stats.by_type %}
+          {% if type.minutes %}
+            <div class="rounded-sm focus:outline focus:outline-2 focus:outline-ink/40 hover:brightness-125 {% if type.key == 'movie' %}bg-viz-movie{% elif type.key == 'tv' %}bg-viz-tv{% elif type.key == 'book' %}bg-viz-book{% else %}bg-viz-game{% endif %}"
+                 style="width: {{ type.percent|unlocalize }}%" tabindex="0" role="img"
+                 data-tip="{{ type.label }}" data-tip-value="{{ type.time }} &middot; {{ type.percent|floatformat:0 }}%"
+                 aria-label="{{ type.label }}: {{ type.time }}, {{ type.percent|floatformat:0 }}%"></div>
+          {% endif %}
+        {% endfor %}
+      </div>
+    {% else %}
+      <p class="empty">Nothing logged this month yet.</p>
+    {% endif %}
+    <ul class="mt-4 grid gap-2.5 text-sm sm:grid-cols-2">
+      {% for type in stats.by_type %}
+        <li class="flex items-start gap-2.5">
+          <span class="mt-1 size-3 shrink-0 rounded-sm {% if type.key == 'movie' %}bg-viz-movie{% elif type.key == 'tv' %}bg-viz-tv{% elif type.key == 'book' %}bg-viz-book{% else %}bg-viz-game{% endif %}" aria-hidden="true"></span>
+          <span>
+            <span class="font-medium">{{ type.label }}</span>
+            <span class="block text-xs text-muted">
+              {% if type.time %}{{ type.time }}{% else %}Nothing logged{% endif %}
+              &middot; {{ type.finished }} finished
+            </span>
+          </span>
+        </li>
+      {% endfor %}
+    </ul>
+  </section>
+
+  <div class="space-y-4">
+    <section class="card">
+      <div class="card-head"><h2>In progress</h2></div>
+      {% for item in stats.in_progress %}
+        <div class="row">
+          <div class="flex-1">
+            <strong>{{ item.title }}</strong>
+            <p class="text-xs text-muted">
+              <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
+              {{ item.percent_complete }}% &middot; {{ item.remaining_minutes }} min left
+            </p>
+            <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-2">
+              <div class="h-full bg-good" style="width: {{ item.percent_complete|unlocalize }}%"></div>
+            </div>
+          </div>
+        </div>
+      {% empty %}
+        <p class="empty">Nothing in progress. Accept a suggestion to start something.</p>
+      {% endfor %}
+    </section>
+
+    <section class="card">
+      <div class="card-head"><h2>Recently finished</h2></div>
+      {% for item in stats.recent_finished %}
+        <div class="row">
+          <div class="flex-1">
+            <strong>{{ item.title }}</strong>
+            <p class="text-xs text-muted">
+              <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
+              {{ item.completed_at|date:"M j, Y"|default:"recently" }}
+            </p>
+          </div>
+          <a class="text-sm" href="{% url 'write_review' item.pk %}">Review</a>
+        </div>
+      {% empty %}
+        <p class="empty">Nothing finished yet.</p>
+      {% endfor %}
+    </section>
+  </div>
+</div>
+
+<div id="chart-tip" role="tooltip" hidden class="pointer-events-none fixed z-50 rounded-lg border border-line bg-surface-2 px-3 py-2 text-sm shadow-lg">
+  <div class="font-semibold text-ink" data-tip-value-slot></div>
+  <div class="text-xs text-muted" data-tip-label-slot></div>
+</div>
+<script defer src="{% static 'js/stats.js' %}"></script>
+{% endblock %}

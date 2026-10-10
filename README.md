@@ -84,6 +84,7 @@ mermaid diagrams are drawn by a real browser.
 | Accept/reject suggestions | done, rejections feed back into the scoring |
 | Plan the week | done, one click plans the next 7 days, accept one by one or all at once |
 | Review manager | done |
+| Progress | done, time logged, streaks, finished counts, breakdown by type |
 | Notifications | partly done, reminders while a tab is open, no background push yet |
 
 ## Growing the catalog
@@ -185,6 +186,27 @@ someone with the browser closed needs a service worker, VAPID keys, the
 `pywebpush` package and something on the server running on a timer. That is the
 next step if we want it.
 
+## Progress
+
+The Progress page shows time logged this month, things finished, your current
+and best streak, your average review rating, a 30 day chart of time per day,
+and how this month's time splits across movies, TV, books and games.
+
+All of it comes from sessions you mark **done**, on the day you marked them.
+Minutes you type into a backlog item by hand have no date, so they can't be
+placed on a day and are not counted. A streak is a run of days with at least
+one done session, and it stays alive through a quiet morning, so it only
+drops to zero once a whole day has passed with nothing.
+
+The chart is plain HTML and CSS with a small script (`static/js/stats.js`) for
+the hover and keyboard tooltips, and every number in it is also in the "Show
+as a table" list and the legend. The four type colours are set in the `@theme`
+block of `static/src/app.css` as `viz-movie`, `viz-tv`, `viz-book` and
+`viz-game`. They are different from the pill colours on purpose: the pill
+colours are pale and two of them are too alike to tell apart as bars. These
+four were checked for colour blind separation and contrast against the card
+background. Keep one colour per type if you change them.
+
 ## How the scheduling works
 
 Two steps, both in `planner/services.py`.
@@ -226,7 +248,7 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      192 tests, mostly on the scheduling
+  tests.py      226 tests, mostly on the scheduling
   management/commands/seed_catalog.py
   management/commands/reset_accounts.py
   management/commands/import_catalog.py
@@ -235,6 +257,7 @@ mediaflow/env.py   reads .env at startup
 .env.example   copy to .env for real email settings
 templates/
 static/js/reminders.js   polls for upcoming sessions and shows notifications
+static/js/stats.js       tooltips for the charts on the Progress page
 static/src/app.css   Tailwind source (edit this)
 static/css/app.css   built output (don't edit)
 ```
