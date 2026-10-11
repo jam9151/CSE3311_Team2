@@ -1,0 +1,8 @@
+# Files that Linux reads, kept with Unix line endings even when checked out on
+# Windows. A stray carriage return at the end of a line is invisible and can
+# break a Dockerfile, an ignore pattern or a shell script.
+Dockerfile text eol=lf
+docker-compose.yml text eol=lf
+.dockerignore text eol=lf
+docker/** text eol=lf
+*.sh text eol=lf
