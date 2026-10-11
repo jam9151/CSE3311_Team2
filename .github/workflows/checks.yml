@@ -64,3 +64,26 @@ jobs:
             echo "static/css/app.css is out of date. Run 'npm run build:css' and commit the result."
             exit 1
           }
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build the image
+        run: docker build -t mediaflow .
+
+      # Starts the container with throwaway settings and waits for the app's own
+      # health check, so a broken Dockerfile or start-up command fails here.
+      - name: The container starts and is healthy
+        run: |
+          docker run -d --name mediaflow -p 8000:8000 \
+            -e DJANGO_SECRET_KEY=ci-only-q7Zk2mXp4Nw7Rt1Ys5Uc9Hd3Lf6Gj0Be8Va4Tx3Oi5Pl2Km9Jn7Hb1Gv \
+            -e DJANGO_ALLOWED_HOSTS=localhost -e DJANGO_SSL_REDIRECT=false \
+            mediaflow
+          for attempt in $(seq 1 30); do
+            if curl --fail --silent http://localhost:8000/healthz/; then echo; exit 0; fi
+            sleep 2
+          done
+          docker logs mediaflow
+          exit 1

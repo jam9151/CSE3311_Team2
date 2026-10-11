@@ -131,9 +131,28 @@ problem stays saved.
 
 ### A very large catalog
 
-For the full 10,000 of each, run the types separately so one failing doesn't
-hold up the others. `--skip-existing` is what makes a long run safe to stop and
-carry on:
+Step by step:
+
+1. Get the two free keys. TMDB (movies and TV): sign up at
+   https://www.themoviedb.org/signup, then open
+   https://www.themoviedb.org/settings/api and request a key. Copy the short
+   "API Key". RAWG (games): https://rawg.io/apidocs, then get a key.
+2. Put them in `.env`:
+
+   ```text
+   TMDB_API_KEY="paste-the-tmdb-key"
+   RAWG_API_KEY="paste-the-rawg-key"
+   ```
+
+3. Try a handful of each first, to check the keys work:
+
+   ```powershell
+   python manage.py import_catalog --limit 5
+   ```
+
+4. Then the big runs. Do the types separately so one failing doesn't hold up
+   the others. `--skip-existing` is what makes a long run safe to stop and
+   carry on:
 
 ```powershell
 python manage.py import_catalog --only movies tv --limit 10000 --skip-existing
@@ -325,6 +344,87 @@ Two things worth knowing about the defaults:
 - A gap gets one suggestion however long it is. A free Saturday with no
   commitments is one 15 hour gap, so it gets one suggestion.
 
+## Running in Docker
+
+The image runs the app the way production does: gunicorn, hashed static files,
+debug off, and the SQLite database on a volume called `mediaflow-data`. You need
+Docker Desktop, or Docker Engine with the Compose plugin.
+
+1. Put a secret key in `.env`, next to the other settings:
+
+   ```bash
+   python -c "import secrets; print(secrets.token_urlsafe(50))"
+   ```
+
+   ```text
+   DJANGO_SECRET_KEY="paste-it-here"
+   ```
+
+2. Build and start it, then open http://localhost:8000:
+
+   ```bash
+   docker compose up --build
+   ```
+
+   The first build downloads Python and installs the packages, which takes a few
+   minutes. Later builds are quick. Add `-d` to run it in the background.
+
+3. Everything else is run inside the container. Create an admin, load the
+   starter catalog and the demo account, or import the big catalog (your API
+   keys come from the same `.env`):
+
+   ```bash
+   docker compose exec web python manage.py createsuperuser
+   docker compose exec web python manage.py seed_catalog --demo
+   docker compose exec web python manage.py import_catalog --only movies tv --limit 10000 --skip-existing
+   ```
+
+Day to day:
+
+```bash
+docker compose logs -f web      # watch the log
+docker compose down             # stop it, the database is kept
+docker compose up --build       # start again, rebuilding after a code change
+```
+
+**Your data.** The database lives in the `mediaflow-data` volume, so it
+survives `down`, rebuilds and restarts. `docker compose down -v` deletes it.
+To take a copy:
+
+```bash
+docker compose cp web:/data/db.sqlite3 backup.sqlite3
+```
+
+To bring in the database you already have on your machine, for example after a
+big local import:
+
+```bash
+docker compose cp db.sqlite3 web:/data/db.sqlite3
+docker compose exec --user root web chown app:app /data/db.sqlite3
+docker compose restart web
+```
+
+The `chown` is needed because a copied file belongs to root, and the app
+deliberately doesn't run as root.
+
+Things to know:
+
+- **Email.** Unless `.env` sets up SMTP, confirmation emails are printed in
+  `docker compose logs web`, so that is where to find a link.
+- **Cookies.** Debug is off in the container, so cookies are marked Secure.
+  Chrome and Firefox accept that on `http://localhost`. Safari doesn't, so sign
+  in from Chrome or Firefox, or put HTTPS in front.
+- **Port.** If 8000 is taken, set `HOST_PORT=8080` in `.env`.
+- **One container.** SQLite is a single file, so run one copy of the container,
+  not several sharing it.
+
+To deploy the image to a host, give it the same variables as in Deploying
+below: `DJANGO_SECRET_KEY`, `DJANGO_ALLOWED_HOSTS`, and, when the host ends
+HTTPS for you, `DJANGO_BEHIND_PROXY=true` and `DJANGO_SSL_REDIRECT=true`. Attach
+a persistent disk at `/data`. The container listens on `$PORT` (8000 if unset),
+`GUNICORN_WORKERS` sets how many workers it starts (3 by default), and it
+carries its own health check against `/healthz/`.
+
 ## Deploying
 
 Running locally needs no setup: with nothing configured, debug is on and the
@@ -362,8 +462,12 @@ variable set in the environment wins over the same one in the file.
 Make a secret key with:
 
 ```bash
-python -c "from django.core.management.utils import get_random_secret_key as k; print(k())"
+python -c "import secrets; print(secrets.token_urlsafe(50))"
 ```
+
+That one only uses letters, digits, `-` and `_`. Django's own generator can
+produce `$` and `#`, which Docker reads as variable and comment syntax when the
+key sits in a `.env` file.
 
 With the variables set, a first deploy is:
 
@@ -405,11 +509,13 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      312 tests, mostly on the scheduling
+  tests.py      327 tests, mostly on the scheduling
   management/commands/seed_catalog.py
   management/commands/reset_accounts.py
   management/commands/import_catalog.py
   catalog_import.py   the Open Library, TMDB and RAWG importers
+Dockerfile, docker-compose.yml   the container, see Running in Docker
+docker/healthcheck.py   what the container's health check runs
 mediaflow/settings.py   everything configurable, read from the environment
 mediaflow/env.py   reads .env and parses the variables
 .github/workflows/checks.yml   the checks that run on every push

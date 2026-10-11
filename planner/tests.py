@@ -1,3 +1,4 @@
+import importlib.util
 import io
 import json
 import os
@@ -2935,3 +2936,106 @@ class SkipExistingCommandTests(TestCase):
         self.assertEqual(sorted(CatalogItem.objects.values_list("source_id", flat=True)), ["1", "2"])
         self.assertIn("1 added", out)
         self.assertIn("1 already imported", out)
+
+
+# ---------------------------------------------------------------- docker
+
+
+def load_healthcheck():
+    spec = importlib.util.spec_from_file_location("healthcheck", PROJECT_ROOT / "docker" / "healthcheck.py")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+class ContainerHealthCheckTests(TestCase):
+    def setUp(self):
+        self.healthcheck = load_healthcheck()
+
+    def test_it_asks_for_the_first_real_host_name(self):
+        self.assertEqual(self.healthcheck.host_header("a.example.com, b.example.com"), "a.example.com")
+
+    def test_a_leading_dot_pattern_becomes_the_domain(self):
+        self.assertEqual(self.healthcheck.host_header(".example.com"), "example.com")
+
+    def test_a_wildcard_or_nothing_falls_back_to_localhost(self):
+        self.assertEqual(self.healthcheck.host_header("*"), "localhost")
+        self.assertEqual(self.healthcheck.host_header(""), "localhost")
+        self.assertEqual(self.healthcheck.host_header(" , "), "localhost")
+
+    def test_a_wildcard_is_skipped_for_a_real_name_after_it(self):
+        self.assertEqual(self.healthcheck.host_header("*, real.example.com"), "real.example.com")
+
+    def run_check(self, urlopen_result, **env):
+        # One item: a response is returned, an exception is raised.
+        with mock.patch.dict(os.environ, env), mock.patch("urllib.request.urlopen", side_effect=[urlopen_result]) as opened:
+            return self.healthcheck.main(), opened
+
+    def response(self, status):
+        reply = mock.MagicMock()
+        reply.status = status
+        reply.__enter__.return_value = reply
+        return reply
+
+    def test_healthy_when_the_app_answers_200(self):
+        code, opened = self.run_check(self.response(200), PORT="9000", DJANGO_ALLOWED_HOSTS="x.example.com")
+        self.assertEqual(code, 0)
+        request = opened.call_args[0][0]
+        self.assertEqual(request.full_url, "http://127.0.0.1:9000/healthz/")
+        self.assertEqual(request.get_header("Host"), "x.example.com")
+
+    def test_unhealthy_on_a_503(self):
+        error = urllib.error.HTTPError("http://127.0.0.1:8000/healthz/", 503, "down", Message(), None)
+        self.assertEqual(self.run_check(error)[0], 1)
+
+    def test_unhealthy_when_nothing_is_listening(self):
+        self.assertEqual(self.run_check(urllib.error.URLError("refused"))[0], 1)
+
+    def test_unhealthy_on_any_other_status(self):
+        self.assertEqual(self.run_check(self.response(204))[0], 1)
+
+    def test_the_port_defaults_to_8000(self):
+        with mock.patch.dict(os.environ):
+            os.environ.pop("PORT", None)
+            _, opened = self.run_check(self.response(200))
+        self.assertEqual(opened.call_args[0][0].full_url, "http://127.0.0.1:8000/healthz/")
+
+
+class ContainerFilesTests(TestCase):
+    """Guards on the things that would be easy to break and costly: secrets in the image."""
+
+    def read(self, name):
+        return (PROJECT_ROOT / name).read_text(encoding="utf-8")
+
+    def test_secrets_and_the_local_database_are_kept_out_of_the_image(self):
+        ignored = {line.strip() for line in self.read(".dockerignore").splitlines()}
+        for name in (".env", "db.sqlite3", ".git", "venv", "node_modules"):
+            self.assertIn(name, ignored)
+
+    def test_the_app_does_not_run_as_root(self):
+        dockerfile = self.read("Dockerfile")
+        self.assertIn("USER app", dockerfile)
+        self.assertLess(dockerfile.index("useradd"), dockerfile.index("USER app"))
+
+    def test_the_only_secret_key_in_the_dockerfile_is_the_build_only_one(self):
+        dockerfile = self.read("Dockerfile")
+        self.assertEqual(dockerfile.count("DJANGO_SECRET_KEY="), 1)
+        self.assertIn("build-only", dockerfile)
+        self.assertNotIn("COPY .env", dockerfile)
+
+    def test_the_container_has_a_health_check_that_points_at_our_script(self):
+        self.assertIn("HEALTHCHECK", self.read("Dockerfile"))
+        self.assertIn("docker/healthcheck.py", self.read("Dockerfile"))
+        self.assertTrue((PROJECT_ROOT / "docker" / "healthcheck.py").exists())
+
+    def test_compose_insists_on_a_secret_key_and_keeps_the_database_on_a_volume(self):
+        compose = self.read("docker-compose.yml")
+        self.assertIn("DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?", compose)
+        self.assertIn("mediaflow-data:/data", compose)
+        self.assertIn("DATABASE_PATH: /data/db.sqlite3", compose)
+
+    def test_the_readme_key_command_makes_a_key_docker_can_read(self):
+        # Django's generator can emit $ and #, which compose treats as syntax in a .env file.
+        readme = self.read("README.md")
+        self.assertIn("secrets.token_urlsafe(50)", readme)
+        self.assertNotIn("get_random_secret_key", readme)

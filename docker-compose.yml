@@ -1,0 +1,35 @@
+# MediaFlow in Docker.
+#
+#   docker compose up --build     start it, then open http://localhost:8000
+#   docker compose down           stop it, the database is kept
+#
+# Settings come from your .env file (see .env.example). DJANGO_SECRET_KEY must
+# be set there. The README's "Running in Docker" section has the rest.
+
+name: mediaflow
+
+services:
+  web:
+    build: .
+    image: mediaflow
+    ports:
+      - "${HOST_PORT:-8000}:8000"
+    # Everything in .env goes into the container: email, API keys, and so on.
+    # The file itself is never copied into the image.
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DJANGO_DEBUG: "false"
+      DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?Set DJANGO_SECRET_KEY in your .env file, see the README}
+      DJANGO_ALLOWED_HOSTS: ${DJANGO_ALLOWED_HOSTS:-localhost,127.0.0.1}
+      # Off here because http://localhost has no HTTPS to redirect to. Turn it
+      # on, and DJANGO_BEHIND_PROXY if a proxy ends HTTPS, on a real host.
+      DJANGO_SSL_REDIRECT: ${DJANGO_SSL_REDIRECT:-false}
+      DATABASE_PATH: /data/db.sqlite3
+    volumes:
+      - mediaflow-data:/data
+    restart: unless-stopped
+
+volumes:
+  mediaflow-data:

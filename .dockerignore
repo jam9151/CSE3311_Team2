@@ -1,0 +1,15 @@
+# Keep secrets, local data and clutter out of the image.
+.git
+.github
+.claude
+.env
+.idea
+.vscode
+venv
+.venv
+node_modules
+__pycache__
+*.pyc
+db.sqlite3
+staticfiles
+docs

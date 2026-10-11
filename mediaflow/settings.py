@@ -40,7 +40,7 @@ if not SECRET_KEY:
     if not DEBUG:
         raise ImproperlyConfigured(
             "DJANGO_SECRET_KEY is not set. Generate one with: "
-            'python -c "from django.core.management.utils import get_random_secret_key as k; print(k())"'
+            'python -c "import secrets; print(secrets.token_urlsafe(50))"'
         )
     SECRET_KEY = _DEV_SECRET_KEY
 elif not DEBUG and SECRET_KEY.startswith("django-insecure-"):
