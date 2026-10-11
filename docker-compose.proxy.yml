@@ -1,0 +1,24 @@
+# For a server that already has a reverse proxy running in Docker, such as a
+# shared Caddy, Traefik or Nginx Proxy Manager. Use it INSTEAD of
+# docker-compose.caddy.yml. It joins the app to the proxy's Docker network, so
+# the proxy reaches it by name at http://mediaflow-web:8000, and it publishes
+# no port on the host at all. Nothing can reach the app except through the proxy.
+#
+# In .env:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml
+#   PROXY_NETWORK=the-name-of-your-proxys-docker-network
+#
+# See "If a proxy already runs on the server" in the README for how to find that
+# network's name and what to add to the proxy.
+
+services:
+  web:
+    ports: !reset []
+    networks:
+      - proxy
+
+networks:
+  proxy:
+    name: ${PROXY_NETWORK:?Set PROXY_NETWORK in .env to the Docker network your proxy is on, see the README}
+    external: true

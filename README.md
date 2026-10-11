@@ -504,11 +504,72 @@ are sure.
 http or https. That is only safe because Caddy is the only way in, which the
 Caddy file arranges by removing the app's published port.
 
-If you already run a reverse proxy, such as nginx, Nginx Proxy Manager, Traefik
-or a Cloudflare Tunnel, skip the Caddy file. Keep the same Django variables,
-add `BIND_ADDRESS=127.0.0.1` to `.env`, point the proxy at
-`http://127.0.0.1:8000`, and make sure it passes on the `Host` header and sets
-`X-Forwarded-Proto: https`.
+If a proxy already runs on the server, don't use the Caddy file. Its Caddy can't
+start while something else holds ports 80 and 443. The next section covers that.
+
+### If a proxy already runs on the server
+
+Many servers already have one reverse proxy in Docker that fronts every site,
+such as a shared Caddy, Traefik or Nginx Proxy Manager on ports 80 and 443. You
+can tell: starting `docker-compose.caddy.yml` fails with "Bind for 0.0.0.0:80
+failed: port is already allocated". Don't add a second proxy. Join the one you
+have. `docker-compose.proxy.yml` puts the app on that proxy's Docker network, so
+the proxy reaches it by name at `http://mediaflow-web:8000`, and it publishes no
+port on the host. That also means the app can't clash with whatever else uses
+port 8000 there.
+
+1. Find the Docker network the proxy is on. Replace `caddy` with the name of
+   your proxy's container, which `sudo docker ps` shows:
+
+   ```bash
+   sudo docker inspect caddy --format '{{range $name, $net := .NetworkSettings.Networks}}{{$name}}{{"\n"}}{{end}}'
+   ```
+
+   If it lists several, use the one it shares with your other sites. Run the
+   same command on another site's container to compare.
+
+2. In `.env`, use these in place of the Caddy lines, and keep the rest of the
+   Django lines from the section above:
+
+   ```text
+   COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml
+   PROXY_NETWORK=the-network-name-from-step-1
+   ```
+
+3. Start the app on its own:
+
+   ```bash
+   sudo docker compose up -d --build
+   ```
+
+4. Add the site to the proxy. For a Caddy proxy, add this block to its
+   Caddyfile. The Caddyfile's location is the "Source" that this prints:
+
+   ```bash
+   sudo docker inspect caddy --format '{{range .Mounts}}{{.Source}} -> {{.Destination}}{{"\n"}}{{end}}'
+   ```
+
+   ```text
+   mediaflow.jessemcnary.com {
+   	reverse_proxy mediaflow-web:8000
+   }
+   ```
+
+   Then make Caddy reload, using the "Destination" path of the Caddyfile:
+
+   ```bash
+   sudo docker exec caddy caddy reload --config /etc/caddy/Caddyfile
+   ```
+
+   For Nginx Proxy Manager, add a Proxy Host for the domain with scheme `http`,
+   forward host `mediaflow-web`, port `8000`, then request a certificate on its
+   SSL tab and switch on Force SSL. Traefik needs the equivalent router and
+   service pointing at `mediaflow-web:8000`.
+
+The proxy must pass on the `Host` header and set `X-Forwarded-Proto: https`, which
+Caddy and Nginx Proxy Manager both do. Without that the site redirects in a loop.
+If you reach the proxy through Cloudflare, the DNS record and SSL mode advice
+above still applies.
 
 Things to know:
 
@@ -613,13 +674,14 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      334 tests, mostly on the scheduling
+  tests.py      337 tests, mostly on the scheduling
   management/commands/seed_catalog.py
   management/commands/reset_accounts.py
   management/commands/import_catalog.py
   catalog_import.py   the Open Library, TMDB and RAWG importers
 Dockerfile, docker-compose.yml   the container, see Running in Docker
 docker-compose.caddy.yml, Caddyfile   optional HTTPS in front of it, see HTTPS on a real domain
+docker-compose.proxy.yml   join a proxy that is already running instead, see If a proxy already runs on the server
 docker/healthcheck.py   what the container's health check runs
 mediaflow/settings.py   everything configurable, read from the environment
 mediaflow/env.py   reads .env and parses the variables

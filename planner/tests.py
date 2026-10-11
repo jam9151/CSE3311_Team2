@@ -3055,6 +3055,21 @@ class ContainerFilesTests(TestCase):
             self.assertIn(published, caddy)
         self.assertIn("./Caddyfile:/etc/caddy/Caddyfile:ro", caddy)
 
+    def test_the_shared_proxy_layer_publishes_nothing_and_joins_the_proxys_network(self):
+        proxy = self.read("docker-compose.proxy.yml")
+        self.assertIn("ports: !reset []", proxy)
+        self.assertIn("external: true", proxy)
+        self.assertIn("- proxy", proxy)
+
+    def test_the_shared_proxy_layer_will_not_start_without_naming_the_network(self):
+        self.assertIn("${PROXY_NETWORK:?", self.read("docker-compose.proxy.yml"))
+
+    def test_the_shared_proxy_layer_does_not_bring_its_own_proxy(self):
+        # It is the alternative to the Caddy layer, not an addition to it.
+        proxy = self.read("docker-compose.proxy.yml")
+        self.assertNotIn("caddy:2", proxy)
+        self.assertNotIn("80:80", proxy)
+
     def test_the_certificates_are_kept_on_a_volume(self):
         caddy = self.read("docker-compose.caddy.yml")
         self.assertIn("caddy-data:/data", caddy)
