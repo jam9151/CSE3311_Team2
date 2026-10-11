@@ -15,8 +15,11 @@ services:
     # A fixed name, so plain docker commands work too: docker logs mediaflow-web.
     # The catch is that it rules out running several copies with --scale.
     container_name: mediaflow-web
+    # BIND_ADDRESS=127.0.0.1 keeps the app off the network, for when a reverse
+    # proxy on the same machine is the only thing that should reach it. Docker
+    # publishes ports past the host's firewall, so this is the reliable way.
     ports:
-      - "${HOST_PORT:-8000}:8000"
+      - "${BIND_ADDRESS:-0.0.0.0}:${HOST_PORT:-8000}:8000"
     # Everything in .env goes into the container: email, API keys, and so on.
     # The file itself is never copied into the image.
     env_file:

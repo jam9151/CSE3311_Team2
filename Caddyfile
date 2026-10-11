@@ -1,0 +1,7 @@
+# Caddy answers on the domain, gets a certificate for it from Let's Encrypt, and
+# passes requests to the app. It sets X-Forwarded-Proto for us, which is what
+# DJANGO_BEHIND_PROXY relies on. http is redirected to https automatically.
+{$MEDIAFLOW_DOMAIN:localhost} {
+	encode zstd gzip
+	reverse_proxy web:8000
+}

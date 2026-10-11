@@ -446,10 +446,69 @@ sudo docker compose up -d --build
 sudo docker compose logs -f web
 ```
 
-If the page won't load from another machine, the server's firewall is
-probably blocking port 8000. For HTTPS, put a reverse proxy such as Caddy or
-nginx in front, then set `DJANGO_BEHIND_PROXY=true`, `DJANGO_SSL_REDIRECT=true`
-and `DJANGO_SECURE_COOKIES=true`.
+If the page won't load from another machine, check the server's firewall and
+your router. One trap: Docker publishes ports straight past `ufw`, so a
+firewall rule won't hide port 8000. `BIND_ADDRESS=127.0.0.1` in `.env` is what
+keeps the app off the network. For a real domain with HTTPS, see the next
+section.
+
+### HTTPS on a real domain
+
+This sets the site up at `mediaflow.jessemcnary.com`. Swap in your own domain
+throughout. `docker-compose.caddy.yml` adds [Caddy](https://caddyserver.com/) in
+front of the app. Caddy gets the HTTPS certificate from Let's Encrypt, renews it
+by itself, and sends plain http to https. The app is no longer reachable
+directly, only through Caddy.
+
+Before you start:
+
+1. **DNS.** Add an `A` record for `mediaflow.jessemcnary.com` pointing at the
+   server's public IP address. If Cloudflare proxies the record, set its
+   SSL/TLS mode to Full (strict). In Flexible mode Cloudflare talks to the server
+   over http, Caddy redirects it to https, and the site loops forever.
+2. **Ports.** Ports 80 and 443 must reach the server from the internet, which
+   usually means forwarding them on the router. Let's Encrypt needs that to
+   prove the domain is yours. Nothing else on the server can already be using
+   them, such as an existing nginx or Apache.
+
+Then put these in the server's `.env`. Take out `DJANGO_SECURE_COOKIES=false`
+if you added it earlier, because HTTPS makes it unnecessary:
+
+```text
+DJANGO_ALLOWED_HOSTS="mediaflow.jessemcnary.com"
+DJANGO_CSRF_TRUSTED_ORIGINS="https://mediaflow.jessemcnary.com"
+DJANGO_BEHIND_PROXY=true
+DJANGO_SSL_REDIRECT=true
+MEDIAFLOW_DOMAIN=mediaflow.jessemcnary.com
+COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml
+```
+
+`COMPOSE_FILE` makes plain `docker compose` include the Caddy file, so you
+don't have to type `-f` twice. Start it and watch Caddy fetch the certificate:
+
+```bash
+sudo docker compose up -d --build
+```
+
+```bash
+sudo docker compose logs -f caddy
+```
+
+Look for a line saying the certificate was obtained, then open
+`https://mediaflow.jessemcnary.com`. Once that works, turn on HSTS by adding
+`DJANGO_HSTS_SECONDS=3600` to `.env` and restarting. Browsers can't be told to
+forget HSTS, so start small and only raise it to a year (`31536000`) when you
+are sure.
+
+`DJANGO_BEHIND_PROXY=true` makes the app believe whatever the proxy says about
+http or https. That is only safe because Caddy is the only way in, which the
+Caddy file arranges by removing the app's published port.
+
+If you already run a reverse proxy, such as nginx, Nginx Proxy Manager, Traefik
+or a Cloudflare Tunnel, skip the Caddy file. Keep the same Django variables,
+add `BIND_ADDRESS=127.0.0.1` to `.env`, point the proxy at
+`http://127.0.0.1:8000`, and make sure it passes on the `Host` header and sets
+`X-Forwarded-Proto: https`.
 
 Things to know:
 
@@ -554,12 +613,13 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      328 tests, mostly on the scheduling
+  tests.py      334 tests, mostly on the scheduling
   management/commands/seed_catalog.py
   management/commands/reset_accounts.py
   management/commands/import_catalog.py
   catalog_import.py   the Open Library, TMDB and RAWG importers
 Dockerfile, docker-compose.yml   the container, see Running in Docker
+docker-compose.caddy.yml, Caddyfile   optional HTTPS in front of it, see HTTPS on a real domain
 docker/healthcheck.py   what the container's health check runs
 mediaflow/settings.py   everything configurable, read from the environment
 mediaflow/env.py   reads .env and parses the variables

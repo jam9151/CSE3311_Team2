@@ -1,0 +1,38 @@
+# Adds Caddy in front of the app, which gets and renews the HTTPS certificate for
+# your domain by itself. Use it together with docker-compose.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.caddy.yml up -d --build
+#
+# or put this line in .env and plain `docker compose up -d --build` does it:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.caddy.yml
+#
+# The domain comes from MEDIAFLOW_DOMAIN in .env. See "HTTPS on a real domain"
+# in the README, including the DNS record and ports this needs.
+
+services:
+  web:
+    # Only Caddy is reachable from outside. The app is no longer published.
+    ports: !reset []
+
+  caddy:
+    image: caddy:2
+    container_name: mediaflow-caddy
+    restart: unless-stopped
+    depends_on:
+      - web
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      MEDIAFLOW_DOMAIN: ${MEDIAFLOW_DOMAIN:-mediaflow.jessemcnary.com}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      # The certificates. Losing these means asking for new ones.
+      - caddy-data:/data
+      - caddy-config:/config
+
+volumes:
+  caddy-data:
+  caddy-config:

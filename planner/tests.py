@@ -3044,6 +3044,34 @@ class ContainerFilesTests(TestCase):
         self.assertIn("DATABASE_PATH: /data/db.sqlite3", compose)
         self.assertIn("DJANGO_SECURE_COOKIES: ${DJANGO_SECURE_COOKIES:-true}", compose)
 
+    def test_the_app_port_can_be_bound_to_localhost_only(self):
+        self.assertIn("${BIND_ADDRESS:-0.0.0.0}:${HOST_PORT:-8000}:8000", self.read("docker-compose.yml"))
+
+    def test_the_caddy_file_leaves_caddy_as_the_only_way_in(self):
+        caddy = self.read("docker-compose.caddy.yml")
+        self.assertIn("ports: !reset []", caddy)             # the app is no longer published
+        self.assertIn("image: caddy:2", caddy)
+        for published in ('"80:80"', '"443:443"'):
+            self.assertIn(published, caddy)
+        self.assertIn("./Caddyfile:/etc/caddy/Caddyfile:ro", caddy)
+
+    def test_the_certificates_are_kept_on_a_volume(self):
+        caddy = self.read("docker-compose.caddy.yml")
+        self.assertIn("caddy-data:/data", caddy)
+        self.assertIn("caddy-data:\n", caddy)
+
+    def test_the_domain_is_set_in_one_place_and_defaults_to_ours(self):
+        self.assertIn("${MEDIAFLOW_DOMAIN:-mediaflow.jessemcnary.com}", self.read("docker-compose.caddy.yml"))
+        self.assertIn("{$MEDIAFLOW_DOMAIN:localhost}", self.read("Caddyfile"))
+
+    def test_caddy_passes_requests_to_the_app_by_its_service_name(self):
+        self.assertIn("reverse_proxy web:8000", self.read("Caddyfile"))
+
+    def test_the_container_files_are_pinned_to_unix_line_endings(self):
+        attributes = self.read(".gitattributes")
+        for pattern in ("Dockerfile", "docker-compose*.yml", "Caddyfile", ".dockerignore"):
+            self.assertIn(f"{pattern} text eol=lf", attributes)
+
     def test_the_readme_key_command_makes_a_key_docker_can_read(self):
         # Django's generator can emit $ and #, which compose treats as syntax in a .env file.
         readme = self.read("README.md")
