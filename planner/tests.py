@@ -3070,6 +3070,30 @@ class ContainerFilesTests(TestCase):
         self.assertNotIn("caddy:2", proxy)
         self.assertNotIn("80:80", proxy)
 
+    def test_the_tunnel_layer_publishes_nothing_and_runs_cloudflared_beside_the_app(self):
+        tunnel = self.read("docker-compose.tunnel.yml")
+        self.assertIn("ports: !reset []", tunnel)
+        self.assertIn("image: cloudflare/cloudflared", tunnel)
+        self.assertIn("tunnel --no-autoupdate run", tunnel)
+        self.assertNotIn("80:80", tunnel)
+        self.assertNotIn("443:443", tunnel)
+
+    def test_the_tunnel_layer_will_not_start_without_its_token(self):
+        self.assertIn("TUNNEL_TOKEN: ${TUNNEL_TOKEN:?", self.read("docker-compose.tunnel.yml"))
+
+    def test_no_real_tunnel_token_is_committed(self):
+        # A tunnel token is a long base64 string that starts eyJ. Only a placeholder belongs here.
+        for name in (".env.example", "docker-compose.tunnel.yml", "README.md"):
+            self.assertNotRegex(self.read(name), r"eyJ[A-Za-z0-9+/=_-]{40,}", name)
+
+    def test_the_tunnel_layer_is_an_alternative_not_an_addition(self):
+        # The layers are chosen between in COMPOSE_FILE. None should drag in another's pieces.
+        tunnel = self.read("docker-compose.tunnel.yml")
+        self.assertNotIn("image: caddy", tunnel)
+        self.assertNotIn("\n  caddy:", tunnel)
+        self.assertNotIn("cloudflared", self.read("docker-compose.proxy.yml"))
+        self.assertNotIn("cloudflared", self.read("docker-compose.caddy.yml"))
+
     def test_the_certificates_are_kept_on_a_volume(self):
         caddy = self.read("docker-compose.caddy.yml")
         self.assertIn("caddy-data:/data", caddy)

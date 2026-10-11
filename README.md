@@ -571,6 +571,56 @@ Caddy and Nginx Proxy Manager both do. Without that the site redirects in a loop
 If you reach the proxy through Cloudflare, the DNS record and SSL mode advice
 above still applies.
 
+### Without touching the proxy: a Cloudflare Tunnel
+
+If you would rather not change the proxy already on the server, or can't open
+ports 80 and 443, use a tunnel. A `cloudflared` container on the server makes an
+outgoing connection to Cloudflare, and Cloudflare sends your domain's traffic
+down it. Cloudflare gives visitors the HTTPS certificate, so there is nothing to
+forward on the router, no port to publish and no change to any other site. It
+needs the domain to be on Cloudflare, which `jessemcnary.com` is.
+
+1. In the Cloudflare dashboard, find **Tunnels**. It sits under Zero Trust, then
+   Networks, or under Networking, depending on which layout you have. Create a
+   tunnel of type **Cloudflared**, name it `mediaflow`, and copy the **token** it
+   shows, which is a long string. Cloudflare may ask you to pick the Free plan
+   first, and sometimes asks for a payment method that is not charged.
+2. On the tunnel's **Public Hostname** step, add a hostname with subdomain
+   `mediaflow`, domain `jessemcnary.com`, service type `HTTP` and URL
+   `web:8000`. `web` is the app's name inside the compose network, which is how
+   the tunnel container finds it. Cloudflare creates the DNS record for you. If
+   an `A` record named `mediaflow` already exists, delete it first or Cloudflare
+   will refuse.
+3. Put these in the server's `.env`, and take out any other `COMPOSE_FILE`,
+   `PROXY_NETWORK` or `MEDIAFLOW_DOMAIN` lines:
+
+   ```text
+   COMPOSE_FILE=docker-compose.yml:docker-compose.tunnel.yml
+   TUNNEL_TOKEN="paste-the-token-here"
+   DJANGO_ALLOWED_HOSTS="mediaflow.jessemcnary.com"
+   DJANGO_CSRF_TRUSTED_ORIGINS="https://mediaflow.jessemcnary.com"
+   DJANGO_BEHIND_PROXY=true
+   DJANGO_SSL_REDIRECT=true
+   ```
+
+4. Start it, and watch the tunnel connect:
+
+   ```bash
+   sudo docker compose up -d --build
+   ```
+
+   ```bash
+   sudo docker compose logs -f cloudflared
+   ```
+
+   Look for a line saying a tunnel connection was registered. The tunnel also
+   shows as healthy in the dashboard. Then open `https://mediaflow.jessemcnary.com`.
+
+The token is a secret. Anyone who has it can run your tunnel, so keep it in
+`.env` and never commit it. If it leaks, delete the tunnel in Cloudflare and make
+a new one. `DJANGO_BEHIND_PROXY=true` is safe here because no port is published,
+so the tunnel is the only thing that can reach the app.
+
 Things to know:
 
 - **Email.** Unless `.env` sets up SMTP, confirmation emails are printed in
@@ -674,7 +724,7 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      337 tests, mostly on the scheduling
+  tests.py      341 tests, mostly on the scheduling
   management/commands/seed_catalog.py
   management/commands/reset_accounts.py
   management/commands/import_catalog.py
@@ -682,6 +732,7 @@ planner/
 Dockerfile, docker-compose.yml   the container, see Running in Docker
 docker-compose.caddy.yml, Caddyfile   optional HTTPS in front of it, see HTTPS on a real domain
 docker-compose.proxy.yml   join a proxy that is already running instead, see If a proxy already runs on the server
+docker-compose.tunnel.yml   reach it through a Cloudflare Tunnel instead, see Without touching the proxy
 docker/healthcheck.py   what the container's health check runs
 mediaflow/settings.py   everything configurable, read from the environment
 mediaflow/env.py   reads .env and parses the variables

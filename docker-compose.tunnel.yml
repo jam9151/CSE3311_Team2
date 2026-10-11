@@ -1,0 +1,28 @@
+# Puts the app on the internet through a Cloudflare Tunnel, without touching any
+# reverse proxy already on the server and without opening any ports. A small
+# cloudflared container connects OUT to Cloudflare, and Cloudflare sends traffic
+# for your domain down that connection. Cloudflare handles HTTPS for visitors.
+#
+# Use it INSTEAD of docker-compose.caddy.yml or docker-compose.proxy.yml. In .env:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.tunnel.yml
+#   TUNNEL_TOKEN=the-long-token-cloudflare-gives-you
+#
+# See "Without touching the proxy: a Cloudflare Tunnel" in the README for the
+# Cloudflare side, which is where the domain is pointed at the tunnel.
+
+services:
+  web:
+    # Nothing is published on the host. Only the tunnel can reach the app.
+    ports: !reset []
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    container_name: mediaflow-tunnel
+    restart: unless-stopped
+    depends_on:
+      - web
+    command: tunnel --no-autoupdate run
+    environment:
+      # A secret. Keep it in .env, which git ignores, and never commit it.
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:?Set TUNNEL_TOKEN in .env to the token Cloudflare gave you for the tunnel, see the README}
