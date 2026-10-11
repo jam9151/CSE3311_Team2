@@ -121,8 +121,14 @@ if not DEBUG:
 
 # HTTPS and cookies. Only when DEBUG is off, since local development is plain http.
 if not DEBUG:
-    SESSION_COOKIE_SECURE = True
-    CSRF_COOKIE_SECURE = True
+    # A browser only keeps a Secure cookie from an https site, or from localhost.
+    # So over plain http to any other address, sign-in and every form fail. Set
+    # DJANGO_SECURE_COOKIES=false only to run a test server on plain http, and
+    # turn it back on once HTTPS is in front. `check --deploy` will keep warning
+    # about it while it is off.
+    _secure_cookies = env_bool("DJANGO_SECURE_COOKIES", default=True)
+    SESSION_COOKIE_SECURE = _secure_cookies
+    CSRF_COOKIE_SECURE = _secure_cookies
 
     # Send http to https. Set DJANGO_SSL_REDIRECT=false to try production
     # settings on your own machine over plain http.

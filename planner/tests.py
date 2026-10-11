@@ -2545,6 +2545,7 @@ class SettingsTests(TestCase):
             "DJANGO_ALLOWED_HOSTS": "a.example.com, b.example.com",
             "DJANGO_CSRF_TRUSTED_ORIGINS": "https://a.example.com",
             "DJANGO_SSL_REDIRECT": "false", "DJANGO_BEHIND_PROXY": "true", "DJANGO_HSTS_SECONDS": "3600",
+            "DJANGO_SECURE_COOKIES": "false",
             "DJANGO_LOG_LEVEL": "warning", "DATABASE_PATH": "/data/mediaflow.sqlite3",
             "DJANGO_STATIC_ROOT": "/data/static",
         })
@@ -2552,6 +2553,7 @@ class SettingsTests(TestCase):
         self.assertEqual(s["hosts"], ["a.example.com", "b.example.com"])
         self.assertEqual(s["csrf_origins"], ["https://a.example.com"])
         self.assertFalse(s["ssl_redirect"])
+        self.assertEqual(s["cookies_secure"], [False, False])
         self.assertEqual(s["proxy_header"], ["HTTP_X_FORWARDED_PROTO", "https"])
         self.assertEqual(s["hsts"], 3600)
         self.assertEqual(s["log_level"], "WARNING")
@@ -2612,6 +2614,12 @@ class DeployCheckTests(TestCase):
             with self.subTest(backend=backend):
                 result = self.deploy_check(EMAIL_BACKEND=f"django.core.mail.backends.{backend}.EmailBackend")
                 self.assertIn("planner.W001", result.stdout + result.stderr)
+
+    def test_insecure_cookies_are_allowed_but_flagged(self):
+        # Needed for a test server on plain http, and not something to leave on.
+        result = self.deploy_check(DJANGO_SECURE_COOKIES="false")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SESSION_COOKIE_SECURE", result.stdout + result.stderr)
 
     def test_the_check_really_does_catch_a_weak_setup(self):
         # Switching the HTTPS redirect off is allowed, but it is not a clean bill of health.
@@ -3034,6 +3042,7 @@ class ContainerFilesTests(TestCase):
         self.assertIn("mediaflow-data:/data", compose)
         self.assertIn("container_name: mediaflow-web", compose)
         self.assertIn("DATABASE_PATH: /data/db.sqlite3", compose)
+        self.assertIn("DJANGO_SECURE_COOKIES: ${DJANGO_SECURE_COOKIES:-true}", compose)
 
     def test_the_readme_key_command_makes_a_key_docker_can_read(self):
         # Django's generator can emit $ and #, which compose treats as syntax in a .env file.

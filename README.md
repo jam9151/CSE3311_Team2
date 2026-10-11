@@ -411,6 +411,46 @@ docker compose restart web
 The `chown` is needed because a copied file belongs to root, and the app
 deliberately doesn't run as root.
 
+### On a remote server
+
+`.env` is ignored by git, so a fresh clone on a server doesn't have one and
+`docker compose` will stop with "DJANGO_SECRET_KEY is missing". Make it there:
+
+```bash
+cd ~/projects/CSE3311_Team2
+echo "DJANGO_SECRET_KEY=\"$(python3 -c 'import secrets; print(secrets.token_urlsafe(50))')\"" >> .env
+chmod 600 .env
+nano .env
+```
+
+That adds a fresh key without you having to copy one around. In the editor,
+add the address people will type into the browser, or the app answers 400:
+
+```text
+DJANGO_ALLOWED_HOSTS="megatron,192.168.1.50"
+```
+
+Also add the email, `TMDB_API_KEY` and `RAWG_API_KEY` lines from your own
+`.env` if you want confirmation emails and catalog imports to work there.
+
+If you reach the server over plain http, which is normal before HTTPS is set
+up, also add `DJANGO_SECURE_COOKIES=false`. Without it the browser throws away
+the sign-in cookie and every form fails with a CSRF error. Turn it back to
+`true` once HTTPS is in front. Then:
+
+```bash
+sudo docker compose up -d --build
+```
+
+```bash
+sudo docker compose logs -f web
+```
+
+If the page won't load from another machine, the server's firewall is
+probably blocking port 8000. For HTTPS, put a reverse proxy such as Caddy or
+nginx in front, then set `DJANGO_BEHIND_PROXY=true`, `DJANGO_SSL_REDIRECT=true`
+and `DJANGO_SECURE_COOKIES=true`.
+
 Things to know:
 
 - **Email.** Unless `.env` sets up SMTP, confirmation emails are printed in
@@ -454,6 +494,7 @@ variable set in the environment wins over the same one in the file.
 | `DJANGO_SECRET_KEY` | a dev key | Required when debug is off. |
 | `DJANGO_ALLOWED_HOSTS` | none | Comma separated host names. Required when debug is off. |
 | `DJANGO_CSRF_TRUSTED_ORIGINS` | none | Full origins such as `https://mediaflow.example.com`. Needed if form posts fail with a CSRF error behind a proxy. |
+| `DJANGO_SECURE_COOKIES` | `true` | Mark the sign-in and form cookies Secure. Browsers drop those from plain http, except on localhost, so set `false` for a test server reached over http, and back to `true` once HTTPS is in front. |
 | `DJANGO_SSL_REDIRECT` | `true` | Redirect http to https when debug is off. `false` lets you try production settings over plain http. |
 | `DJANGO_BEHIND_PROXY` | `false` | Set `true` when a proxy or host ends HTTPS and sets `X-Forwarded-Proto`. Most hosts do, and without it the site redirects forever. Leave it off otherwise, because anyone can send that header. |
 | `DJANGO_HSTS_SECONDS` | `0` | Off until you have seen HTTPS working, because browsers can't be told to forget it. Try `3600`, then `31536000`. |
@@ -513,7 +554,7 @@ planner/
   forms.py      includes the mavs.uta.edu signup check
   verification.py  signed email links, sending, resend limit
   middleware.py    holds unverified users on the confirm page
-  tests.py      327 tests, mostly on the scheduling
+  tests.py      328 tests, mostly on the scheduling
   management/commands/seed_catalog.py
   management/commands/reset_accounts.py
   management/commands/import_catalog.py

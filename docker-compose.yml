@@ -29,6 +29,10 @@ services:
       # Off here because http://localhost has no HTTPS to redirect to. Turn it
       # on, and DJANGO_BEHIND_PROXY if a proxy ends HTTPS, on a real host.
       DJANGO_SSL_REDIRECT: ${DJANGO_SSL_REDIRECT:-false}
+      # Browsers drop Secure cookies from plain http, except on localhost. Set
+      # this to false in .env for a server you reach over http, until HTTPS is in
+      # front of it.
+      DJANGO_SECURE_COOKIES: ${DJANGO_SECURE_COOKIES:-true}
       DATABASE_PATH: /data/db.sqlite3
     volumes:
       - mediaflow-data:/data
