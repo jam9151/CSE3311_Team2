@@ -3032,6 +3032,7 @@ class ContainerFilesTests(TestCase):
         compose = self.read("docker-compose.yml")
         self.assertIn("DJANGO_SECRET_KEY: ${DJANGO_SECRET_KEY:?", compose)
         self.assertIn("mediaflow-data:/data", compose)
+        self.assertIn("container_name: mediaflow-web", compose)
         self.assertIn("DATABASE_PATH: /data/db.sqlite3", compose)
 
     def test_the_readme_key_command_makes_a_key_docker_can_read(self):

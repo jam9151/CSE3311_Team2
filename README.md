@@ -387,6 +387,10 @@ docker compose down             # stop it, the database is kept
 docker compose up --build       # start again, rebuilding after a code change
 ```
 
+The container is named `mediaflow-web`, so plain Docker commands work too, for
+example `docker logs mediaflow-web` or `docker exec -it mediaflow-web python manage.py shell`.
+The `docker compose` commands above use the service name, `web`, and are unaffected.
+
 **Your data.** The database lives in the `mediaflow-data` volume, so it
 survives `down`, rebuilds and restarts. `docker compose down -v` deletes it.
 To take a copy:

@@ -77,7 +77,7 @@ jobs:
       # health check, so a broken Dockerfile or start-up command fails here.
       - name: The container starts and is healthy
         run: |
-          docker run -d --name mediaflow -p 8000:8000 \
+          docker run -d --name mediaflow-web -p 8000:8000 \
             -e DJANGO_SECRET_KEY=ci-only-q7Zk2mXp4Nw7Rt1Ys5Uc9Hd3Lf6Gj0Be8Va4Tx3Oi5Pl2Km9Jn7Hb1Gv \
             -e DJANGO_ALLOWED_HOSTS=localhost -e DJANGO_SSL_REDIRECT=false \
             mediaflow
@@ -85,5 +85,5 @@ jobs:
             if curl --fail --silent http://localhost:8000/healthz/; then echo; exit 0; fi
             sleep 2
           done
-          docker logs mediaflow
+          docker logs mediaflow-web
           exit 1

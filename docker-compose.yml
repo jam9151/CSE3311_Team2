@@ -12,6 +12,9 @@ services:
   web:
     build: .
     image: mediaflow
+    # A fixed name, so plain docker commands work too: docker logs mediaflow-web.
+    # The catch is that it rules out running several copies with --scale.
+    container_name: mediaflow-web
     ports:
       - "${HOST_PORT:-8000}:8000"
     # Everything in .env goes into the container: email, API keys, and so on.
