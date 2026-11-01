@@ -56,10 +56,12 @@ from .services import (
     humanize_minutes,
     month_grid,
     progress_stats,
+    shared_reviews,
     suggest_for_day,
     suggest_for_week,
     total_free_minutes,
     upcoming_reminders,
+    walkthrough,
 )
 from .services import _score as score_item
 from .verification import TOKEN_MAX_AGE_DAYS
@@ -3116,3 +3118,608 @@ class ContainerFilesTests(TestCase):
         readme = self.read("README.md")
         self.assertIn("secrets.token_urlsafe(50)", readme)
         self.assertNotIn("get_random_secret_key", readme)
+
+
+# ---------------------------------------------------------------- iteration 3
+
+# A Wednesday, also long past, for the overnight tests. Any date that is not
+# today works; free_intervals trims today to the current time.
+NIGHT_DAY = date(2025, 3, 5)
+
+
+class OvernightScheduleTests(TestCase):
+    """A bedtime past midnight: up by 10:00, in bed by 02:00."""
+
+    def setUp(self):
+        self.user = make_user(day_start=time(10), day_end=time(2))
+
+    def spans(self, day=NIGHT_DAY, **kwargs):
+        return [(g.start, g.end) for g in free_intervals(self.user, day, **kwargs)]
+
+    def test_profile_knows_it_is_overnight(self):
+        self.assertTrue(self.user.profile.is_overnight)
+        self.assertFalse(make_user("early").profile.is_overnight)
+
+    def test_each_date_has_the_small_hours_and_the_evening(self):
+        # The gap to midnight is stored ending 23:59, the last minute there is.
+        self.assertEqual(self.spans(), [(time(0), time(2)), (time(10), time(23, 59))])
+
+    def test_the_free_time_adds_up_to_sixteen_hours(self):
+        self.assertEqual(total_free_minutes(self.user, NIGHT_DAY), 16 * 60)
+
+    def test_a_block_in_the_small_hours_splits_them(self):
+        RecurringBlock.objects.create(
+            user=self.user, label="Night shift", weekday=NIGHT_DAY.weekday(), start_time=time(0, 30), end_time=time(1)
+        )
+        self.assertEqual(self.spans(), [(time(0), time(0, 30)), (time(1), time(2)), (time(10), time(23, 59))])
+
+    def test_a_block_that_runs_to_midnight_ends_the_evening(self):
+        RecurringBlock.objects.create(
+            user=self.user, label="Closing shift", weekday=NIGHT_DAY.weekday(),
+            start_time=time(18), end_time=time(23, 59),
+        )
+        self.assertEqual(self.spans(), [(time(0), time(2)), (time(10), time(18))])
+
+    def test_a_commitment_across_midnight_is_clipped_on_both_dates(self):
+        Commitment.objects.create(
+            user=self.user, title="Launch party",
+            starts_at=timezone.make_aware(datetime(2025, 3, 5, 22, 0)),
+            ends_at=timezone.make_aware(datetime(2025, 3, 6, 1, 0)),
+        )
+        self.assertEqual(self.spans(), [(time(0), time(2)), (time(10), time(22))])
+        self.assertEqual(self.spans(NIGHT_DAY + timedelta(days=1)), [(time(1), time(2)), (time(10), time(23, 59))])
+
+    def test_today_is_trimmed_to_now_in_the_small_hours(self):
+        today = timezone.localdate()
+        half_past_midnight = timezone.make_aware(datetime.combine(today, time(0, 30)))
+        with mock.patch("django.utils.timezone.now", return_value=half_past_midnight):
+            self.assertEqual(self.spans(today), [(time(0, 30), time(2)), (time(10), time(23, 59))])
+
+    def test_today_is_trimmed_to_now_in_the_evening(self):
+        today = timezone.localdate()
+        evening = timezone.make_aware(datetime.combine(today, time(21, 0)))
+        with mock.patch("django.utils.timezone.now", return_value=evening):
+            # The small hours of today are long gone.
+            self.assertEqual(self.spans(today), [(time(21), time(23, 59))])
+
+    def test_a_late_film_is_suggested_on_the_date_it_starts(self):
+        RecurringBlock.objects.create(
+            user=self.user, label="Everything", weekday=NIGHT_DAY.weekday(), start_time=time(10), end_time=time(21)
+        )
+        film = BacklogItem.objects.create(
+            user=self.user, title="Midnight film", media_type=MediaType.MOVIE, estimated_minutes=150, priority=5
+        )
+        (suggestion,) = suggest_for_day(self.user, NIGHT_DAY)
+        self.assertEqual((suggestion.backlog_item, suggestion.date), (film, NIGHT_DAY))
+        self.assertEqual((suggestion.start_time, suggestion.end_time), (time(21), time(23, 30)))
+
+    def test_a_chapter_fits_the_small_hours(self):
+        RecurringBlock.objects.create(
+            user=self.user, label="Everything", weekday=NIGHT_DAY.weekday(), start_time=time(10), end_time=time(23, 59)
+        )
+        BacklogItem.objects.create(user=self.user, title="A book", media_type=MediaType.BOOK, estimated_minutes=600)
+        (suggestion,) = suggest_for_day(self.user, NIGHT_DAY)
+        # Capped at 90 and rounded down to whole 25-minute chapters.
+        self.assertEqual((suggestion.start_time, suggestion.minutes), (time(0), 75))
+
+    def test_an_accepted_late_session_is_busy_time(self):
+        item = BacklogItem.objects.create(
+            user=self.user, title="Series", media_type=MediaType.TV, estimated_minutes=600
+        )
+        Suggestion.objects.create(
+            user=self.user, backlog_item=item, date=NIGHT_DAY, start_time=time(23), end_time=time(23, 59),
+            minutes=60, status=Suggestion.Status.ACCEPTED,
+        )
+        self.assertEqual(self.spans(), [(time(0), time(2)), (time(10), time(23))])
+
+    def test_week_planning_runs_across_overnight_days(self):
+        BacklogItem.objects.create(user=self.user, title="A book", media_type=MediaType.BOOK, estimated_minutes=6000)
+        plan = suggest_for_week(self.user, WEEK_START, persist=False)
+        self.assertEqual(len(plan), 7)
+        for day, made in plan.items():
+            self.assertTrue(made, day)
+            for suggestion in made:
+                self.assertEqual(suggestion.date, day)
+
+    def test_the_form_accepts_a_bedtime_after_midnight(self):
+        self.client.force_login(self.user)
+        response = self.client.post("/schedule/", {"save_profile": "1", "day_start": "10:00", "day_end": "02:00"})
+        self.assertRedirects(response, "/schedule/")
+        self.user.profile.refresh_from_db()
+        self.assertEqual((self.user.profile.day_start, self.user.profile.day_end), (time(10), time(2)))
+
+    def test_the_form_refuses_the_same_time_twice(self):
+        self.client.force_login(self.user)
+        response = self.client.post("/schedule/", {"save_profile": "1", "day_start": "10:00", "day_end": "10:00"})
+        self.assertContains(response, "can&#x27;t be the same time")
+        self.user.profile.refresh_from_db()
+        self.assertEqual(self.user.profile.day_end, time(2))
+
+    def test_the_form_explains_the_rule(self):
+        self.client.force_login(self.user)
+        self.assertContains(self.client.get("/schedule/"), "counts as after midnight")
+
+    def test_the_pages_render(self):
+        self.client.force_login(self.user)
+        for url in ["/dashboard/", "/calendar/", "/schedule/", f"/calendar/?date={NIGHT_DAY}"]:
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, 200)
+
+    def test_a_normal_day_is_unchanged(self):
+        self.assertEqual(
+            [(g.start, g.end) for g in free_intervals(make_user("early"), NIGHT_DAY)], [(time(8), time(23))]
+        )
+
+
+class PasswordResetTests(TestCase):
+    link_pattern = re.compile(r"http://testserver(/accounts/reset/\S+/\S+/)")
+
+    def setUp(self):
+        self.user = make_user("forgetful")
+
+    def request_reset(self, email="forgetful@mavs.uta.edu"):
+        return self.client.post("/accounts/password_reset/", {"email": email})
+
+    def link(self):
+        return self.link_pattern.search(mail.outbox[-1].body).group(1)
+
+    def test_sign_in_page_links_to_it(self):
+        self.assertContains(self.client.get("/accounts/login/"), "/accounts/password_reset/")
+
+    def test_the_form_uses_this_apps_pages_not_the_admins(self):
+        response = self.client.get("/accounts/password_reset/")
+        self.assertContains(response, "Forgot your password?")
+        self.assertTemplateUsed(response, "base.html")
+
+    def test_asking_sends_one_email_with_a_link(self):
+        self.assertRedirects(self.request_reset(), "/accounts/password_reset/done/")
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].to, ["forgetful@mavs.uta.edu"])
+        self.assertEqual(mail.outbox[0].subject, "Reset your MediaFlow password")
+        self.assertRegex(mail.outbox[0].body, self.link_pattern)
+
+    def test_the_address_is_matched_regardless_of_case(self):
+        self.request_reset("Forgetful@MAVS.uta.edu")
+        self.assertEqual(len(mail.outbox), 1)
+
+    def test_an_unknown_address_gets_the_same_page_and_no_email(self):
+        # Saying "no such account" would tell a stranger which addresses are registered.
+        self.assertRedirects(self.request_reset("nobody@mavs.uta.edu"), "/accounts/password_reset/done/")
+        self.assertEqual(mail.outbox, [])
+
+    def test_the_done_page_mentions_the_terminal_when_mail_is_printed_there(self):
+        with override_settings(EMAIL_BACKEND="django.core.mail.backends.console.EmailBackend"):
+            self.assertContains(self.client.get("/accounts/password_reset/done/"), "printed in the terminal")
+        with override_settings(EMAIL_BACKEND="django.core.mail.backends.smtp.EmailBackend"):
+            self.assertNotContains(self.client.get("/accounts/password_reset/done/"), "printed in the terminal")
+
+    def test_the_link_sets_a_new_password_and_signs_in(self):
+        self.request_reset()
+        # Django's confirm view first redirects to a URL with the token in the session.
+        response = self.client.get(self.link(), follow=True)
+        self.assertContains(response, "Choose a new password")
+        response = self.client.post(
+            response.redirect_chain[-1][0],
+            {"new_password1": "fresh-passphrase-9", "new_password2": "fresh-passphrase-9"},
+        )
+        self.assertRedirects(response, "/accounts/reset/done/")
+        self.assertIn("_auth_user_id", self.client.session)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("fresh-passphrase-9"))
+        self.assertFalse(self.user.check_password("test-password"))
+
+    def test_mismatched_passwords_are_refused(self):
+        self.request_reset()
+        response = self.client.get(self.link(), follow=True)
+        response = self.client.post(
+            response.redirect_chain[-1][0], {"new_password1": "one-thing", "new_password2": "another"}
+        )
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("test-password"))
+
+    def test_the_link_works_once(self):
+        self.request_reset()
+        link = self.link()
+        response = self.client.get(link, follow=True)
+        self.client.post(
+            response.redirect_chain[-1][0],
+            {"new_password1": "fresh-passphrase-9", "new_password2": "fresh-passphrase-9"},
+        )
+        self.client.post("/accounts/logout/")
+        self.assertContains(self.client.get(link, follow=True), "That link didn't work")
+
+    def test_a_forged_link_is_refused(self):
+        response = self.client.get("/accounts/reset/MQ/not-a-real-token/", follow=True)
+        self.assertContains(response, "That link didn't work")
+        self.assertContains(response, "/accounts/password_reset/")
+
+    def test_a_successful_reset_also_confirms_the_email(self):
+        # Opening a link sent to the address proves it is theirs, same as the sign-up link.
+        unverified = make_user("pending", email_verified=False)
+        self.request_reset("pending@mavs.uta.edu")
+        response = self.client.get(self.link(), follow=True)
+        self.client.post(
+            response.redirect_chain[-1][0],
+            {"new_password1": "fresh-passphrase-9", "new_password2": "fresh-passphrase-9"},
+        )
+        unverified.profile.refresh_from_db()
+        self.assertTrue(unverified.profile.email_verified)
+        self.assertEqual(self.client.get("/dashboard/").status_code, 200)
+
+    def test_an_unverified_signed_in_user_can_still_reach_the_reset_pages(self):
+        self.client.force_login(make_user("stuck", email_verified=False))
+        self.assertEqual(self.client.get("/accounts/password_reset/").status_code, 200)
+        self.assertRedirects(self.client.get("/dashboard/"), "/verify/", fetch_redirect_response=False)
+
+    def test_a_mail_server_that_is_down_is_a_message_not_a_crash(self):
+        with mock.patch(
+            "django.contrib.auth.forms.PasswordResetForm.send_mail", side_effect=smtplib.SMTPException("down")
+        ):
+            response = self.client.post("/accounts/password_reset/", {"email": "forgetful@mavs.uta.edu"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "couldn&#x27;t send the email right now")
+
+    def test_signed_in_users_can_change_their_password(self):
+        self.client.force_login(self.user)
+        self.assertContains(self.client.get("/dashboard/"), "/accounts/password_change/")
+        response = self.client.post(
+            "/accounts/password_change/",
+            {"old_password": "test-password", "new_password1": "newer-passphrase-2", "new_password2": "newer-passphrase-2"},
+        )
+        self.assertRedirects(response, "/accounts/password_change/done/")
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("newer-passphrase-2"))
+
+    def test_changing_needs_the_old_password(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            "/accounts/password_change/",
+            {"old_password": "wrong", "new_password1": "newer-passphrase-2", "new_password2": "newer-passphrase-2"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("test-password"))
+
+    def test_changing_needs_a_sign_in(self):
+        self.assertRedirects(
+            self.client.get("/accounts/password_change/"), "/accounts/login/?next=/accounts/password_change/"
+        )
+
+
+class WalkthroughTests(TestCase):
+    def setUp(self):
+        self.user = make_user("newcomer")
+        self.client.force_login(self.user)
+
+    def steps(self):
+        return walkthrough(self.user)
+
+    def test_a_new_account_starts_at_zero_with_the_schedule_step_first(self):
+        result = self.steps()
+        self.assertEqual((result["done"], result["total"]), (0, 5))
+        self.assertEqual(result["next"]["key"], "schedule")
+        self.assertEqual([s["current"] for s in result["steps"]], [True, False, False, False, False])
+
+    def test_steps_are_credited_from_the_data(self):
+        RecurringBlock.objects.create(
+            user=self.user, label="Class", weekday=0, start_time=time(9), end_time=time(10)
+        )
+        item = BacklogItem.objects.create(
+            user=self.user, title="Dune", media_type=MediaType.MOVIE, estimated_minutes=155
+        )
+        self.assertEqual(self.steps()["done"], 2)
+        self.assertEqual(self.steps()["next"]["key"], "suggest")
+
+        suggestion = Suggestion.objects.create(
+            user=self.user, backlog_item=item, date=TEST_DAY, start_time=time(19), end_time=time(21, 35), minutes=155
+        )
+        self.assertEqual(self.steps()["next"]["key"], "accept")
+        suggestion.status = Suggestion.Status.ACCEPTED
+        suggestion.save()
+        self.assertEqual(self.steps()["next"]["key"], "done")
+        suggestion.status = Suggestion.Status.DONE
+        suggestion.save()
+        self.assertIsNone(self.steps())
+
+    def test_a_commitment_counts_as_a_schedule(self):
+        Commitment.objects.create(
+            user=self.user, title="Meeting",
+            starts_at=timezone.make_aware(datetime(2030, 1, 1, 9)), ends_at=timezone.make_aware(datetime(2030, 1, 1, 10)),
+        )
+        self.assertTrue(self.steps()["steps"][0]["done"])
+
+    def test_a_skipped_step_is_still_credited(self):
+        # Someone who adds a backlog item before a schedule is 1 of 5 done, with
+        # the schedule step still the one to do.
+        BacklogItem.objects.create(user=self.user, title="Dune", media_type=MediaType.MOVIE, estimated_minutes=155)
+        result = self.steps()
+        self.assertEqual(result["done"], 1)
+        self.assertEqual(result["next"]["key"], "schedule")
+
+    def test_today_shows_it_with_a_link_to_the_next_step(self):
+        response = self.client.get("/dashboard/")
+        self.assertContains(response, "Getting started")
+        self.assertContains(response, "0 of 5 done")
+        self.assertContains(response, "/schedule/")
+        # The checklist replaces the old one-line banner while it is up.
+        self.assertNotContains(response, "We can't find your free time yet")
+
+    def test_hiding_it(self):
+        response = self.client.post("/dashboard/walkthrough/hide/")
+        self.assertRedirects(response, "/dashboard/")
+        self.user.profile.refresh_from_db()
+        self.assertTrue(self.user.profile.walkthrough_dismissed)
+        self.assertIsNone(self.steps())
+        page = self.client.get("/dashboard/")
+        self.assertNotContains(page, "Getting started")
+        # With it hidden and still no schedule, the short banner comes back.
+        self.assertContains(page, "We can't find your free time yet")
+
+    def test_hiding_needs_a_post(self):
+        self.assertEqual(self.client.get("/dashboard/walkthrough/hide/").status_code, 405)
+
+    def test_hiding_needs_a_sign_in(self):
+        self.client.post("/accounts/logout/")
+        self.assertRedirects(
+            self.client.post("/dashboard/walkthrough/hide/"),
+            "/accounts/login/?next=/dashboard/walkthrough/hide/",
+        )
+
+    def test_one_users_progress_is_not_anothers(self):
+        other = make_user("other")
+        BacklogItem.objects.create(user=other, title="Dune", media_type=MediaType.MOVIE, estimated_minutes=155)
+        self.assertEqual(self.steps()["done"], 0)
+
+    def test_the_demo_account_sees_it_too(self):
+        call_command("seed_catalog", "--demo", stdout=io.StringIO())
+        demo = get_user_model().objects.get(username="demo")
+        self.assertIsNotNone(walkthrough(demo))
+
+
+class RichReviewTests(TestCase):
+    def setUp(self):
+        self.user = make_user("critic")
+        self.client.force_login(self.user)
+        self.catalog = CatalogItem.objects.create(
+            title="Arrival", media_type=MediaType.MOVIE, typical_minutes=116, creator="Denis Villeneuve"
+        )
+        self.item = BacklogItem.objects.create(
+            user=self.user, title="Arrival", media_type=MediaType.MOVIE, estimated_minutes=116,
+            catalog_item=self.catalog, status=BacklogItem.Status.COMPLETED, completed_at=timezone.now(),
+        )
+
+    def post_review(self, **overrides):
+        data = {
+            "rating": 4, "recommend": "yes", "headline": "Quiet and clever", "body": "Worth a slow evening.",
+            "shared": "on",
+        }
+        data.update(overrides)
+        return self.client.post(f"/reviews/{self.item.pk}/write/", data)
+
+    def test_the_form_asks_the_apps_question(self):
+        response = self.client.get(f"/reviews/{self.item.pk}/write/")
+        self.assertContains(response, "Was it worth the time?")
+        self.assertContains(response, "star-picker")
+        self.assertNotContains(response, 'name="rating" value=""')
+        self.assertContains(response, 'name="rating" value="5"')
+        self.assertContains(response, "Share with other students")
+
+    def test_saving_keeps_everything(self):
+        self.assertRedirects(self.post_review(contains_spoilers="on"), "/reviews/")
+        review = Review.objects.get(backlog_item=self.item)
+        self.assertEqual((review.rating, review.recommend, review.headline), (4, True, "Quiet and clever"))
+        self.assertTrue(review.contains_spoilers)
+        self.assertTrue(review.shared)
+        self.assertEqual(review.verdict, "Worth the time")
+
+    def test_not_worth_it_and_private(self):
+        self.post_review(recommend="no", shared="")
+        review = Review.objects.get(backlog_item=self.item)
+        self.assertFalse(review.recommend)
+        self.assertFalse(review.shared)
+        self.assertEqual(review.verdict, "Not worth the time")
+
+    def test_the_verdict_is_required(self):
+        response = self.post_review(recommend="")
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(Review.objects.exists())
+
+    def test_editing_shows_the_saved_verdict(self):
+        self.post_review(recommend="no")
+        response = self.client.get(f"/reviews/{self.item.pk}/write/")
+        self.assertContains(response, 'id="id_recommend_1" required checked')
+
+    def test_next_sends_you_back_where_you_started(self):
+        url = self.catalog.get_absolute_url()
+        response = self.client.post(f"/reviews/{self.item.pk}/write/", {
+            "rating": 5, "recommend": "yes", "next": url,
+        })
+        self.assertRedirects(response, url)
+
+    def test_reviews_page_summarises_and_filters(self):
+        self.post_review()
+        book = BacklogItem.objects.create(
+            user=self.user, title="Dune", media_type=MediaType.BOOK, estimated_minutes=900,
+            status=BacklogItem.Status.COMPLETED,
+        )
+        Review.objects.create(user=self.user, backlog_item=book, rating=2, recommend=False, headline="Dragged")
+
+        page = self.client.get("/reviews/")
+        self.assertContains(page, "Quiet and clever")
+        self.assertContains(page, "Dragged")
+        self.assertContains(page, "3.0")  # average of 4 and 2
+        self.assertContains(page, "50%")  # one yes, one no
+
+        books = self.client.get("/reviews/?type=book")
+        self.assertContains(books, "Dragged")
+        self.assertNotContains(books, "Quiet and clever")
+
+        lowest = self.client.get("/reviews/?sort=lowest")
+        self.assertLess(lowest.content.index(b"Dragged"), lowest.content.index(b"Quiet and clever"))
+        highest = self.client.get("/reviews/?sort=highest")
+        self.assertLess(highest.content.index(b"Quiet and clever"), highest.content.index(b"Dragged"))
+
+    def test_bad_filter_values_fall_back(self):
+        self.post_review()
+        self.assertContains(self.client.get("/reviews/?type=vinyl&sort=sideways"), "Quiet and clever")
+
+    def test_spoilers_are_folded_away(self):
+        self.post_review(contains_spoilers="on")
+        page = self.client.get("/reviews/")
+        self.assertContains(page, "<details")
+        self.assertContains(page, "Show the review (spoilers)")
+
+    def test_catalog_page_shows_other_students_shared_reviews_only(self):
+        other = make_user("other")
+        theirs = BacklogItem.objects.create(
+            user=other, title="Arrival", media_type=MediaType.MOVIE, estimated_minutes=116,
+            catalog_item=self.catalog, status=BacklogItem.Status.COMPLETED,
+        )
+        Review.objects.create(user=other, backlog_item=theirs, rating=5, recommend=True, headline="Loved it")
+        private = make_user("private")
+        private_item = BacklogItem.objects.create(
+            user=private, title="Arrival", media_type=MediaType.MOVIE, estimated_minutes=116,
+            catalog_item=self.catalog, status=BacklogItem.Status.COMPLETED,
+        )
+        Review.objects.create(
+            user=private, backlog_item=private_item, rating=1, recommend=False, headline="Kept to myself", shared=False
+        )
+        self.post_review(headline="My own take")
+
+        page = self.client.get(self.catalog.get_absolute_url())
+        self.assertContains(page, "Loved it")
+        self.assertContains(page, "other")  # the reviewer's username
+        self.assertNotContains(page, "Kept to myself")
+        # Your own review sits in its own section, not among the others.
+        self.assertContains(page, "Your review")
+        self.assertContains(page, "My own take")
+        self.assertContains(page, "5.0/5 from 1 review")
+        self.assertContains(page, "100% say worth it")
+
+    def test_catalog_page_with_no_reviews(self):
+        self.assertContains(self.client.get(self.catalog.get_absolute_url()), "No shared reviews of this yet")
+
+    def test_catalog_page_prompts_for_a_review_once_finished(self):
+        self.assertContains(self.client.get(self.catalog.get_absolute_url()), "Say whether it was worth the time")
+
+    def test_the_summary_helper(self):
+        other = make_user("other")
+        for rating, recommend in [(5, True), (3, False), (4, None)]:
+            item = BacklogItem.objects.create(
+                user=other, title=f"copy {rating}", media_type=MediaType.MOVIE, estimated_minutes=1,
+                catalog_item=self.catalog if rating == 5 else None,
+            )
+            Review.objects.create(user=other, backlog_item=item, rating=rating, recommend=recommend)
+        summary = shared_reviews(self.catalog)
+        # Only the review attached to this catalog title counts.
+        self.assertEqual((summary["count"], summary["average"], summary["recommend_percent"]), (1, 5.0, 100))
+        self.assertEqual(shared_reviews(self.catalog, exclude_user=other)["count"], 0)
+
+    def test_old_reviews_without_a_verdict_still_render(self):
+        Review.objects.create(user=self.user, backlog_item=self.item, rating=3)
+        self.assertContains(self.client.get("/reviews/"), "3/5")
+
+    def test_cannot_review_someone_elses_item(self):
+        other = make_user("other")
+        theirs = BacklogItem.objects.create(user=other, title="Theirs", media_type=MediaType.BOOK, estimated_minutes=1)
+        self.assertEqual(self.client.get(f"/reviews/{theirs.pk}/write/").status_code, 404)
+
+
+class PriorityFormatTests(TestCase):
+    """One way to write a priority everywhere: P4 and its label."""
+
+    def setUp(self):
+        self.user = make_user("tidy")
+        self.client.force_login(self.user)
+        self.catalog = CatalogItem.objects.create(title="Dune", media_type=MediaType.MOVIE, typical_minutes=155)
+        self.item = BacklogItem.objects.create(
+            user=self.user, title="Dune", media_type=MediaType.MOVIE, estimated_minutes=155, priority=4,
+            catalog_item=self.catalog,
+        )
+
+    def test_the_property(self):
+        self.assertEqual(self.item.priority_display, "P4 · High")
+        self.assertEqual(self.item.get_priority_display(), "P4 · High")
+
+    def test_every_page_uses_it(self):
+        Suggestion.objects.create(
+            user=self.user, backlog_item=self.item, date=timezone.localdate(),
+            start_time=time(19), end_time=time(21, 35), minutes=155,
+        )
+        for url in ["/dashboard/", "/backlog/", self.catalog.get_absolute_url()]:
+            with self.subTest(url=url):
+                page = self.client.get(url)
+                self.assertContains(page, "P4 · High")
+                self.assertNotContains(page, "Priority 4")
+                self.assertNotContains(page, "priority 4")
+
+    def test_the_backlog_dropdown_and_the_form_list_the_labels(self):
+        dropdown = self.client.get("/backlog/")
+        self.assertContains(dropdown, "P5 · Must play next")
+        self.assertContains(dropdown, "P1 · Someday")
+        form = self.client.get(f"/backlog/{self.item.pk}/edit/")
+        self.assertContains(form, '<option value="4" selected>P4 · High</option>', html=True)
+
+
+class ColdStartFlowTests(TestCase):
+    """The cold-start user test, automated: sign up, verify, set up a week,
+    accept a suggestion, mark it done, review it, and the checklist goes away.
+    docs/iteration3-cold-start-test.md is the same run with real people."""
+
+    link_pattern = re.compile(r"http://testserver(/verify/\S+)")
+
+    def test_the_whole_first_session(self):
+        CatalogItem.objects.create(title="Arrival", media_type=MediaType.MOVIE, typical_minutes=116)
+
+        # Sign up, land on the holding page, open the link from the email.
+        response = self.client.post("/register/", {
+            "username": "fresh", "email": "fresh@mavs.uta.edu",
+            "password1": "sturdy-passphrase-1", "password2": "sturdy-passphrase-1",
+        })
+        self.assertRedirects(response, "/verify/")
+        self.assertRedirects(self.client.get("/dashboard/"), "/verify/", fetch_redirect_response=False)
+        link = self.link_pattern.search(mail.outbox[0].body).group(1)
+        self.assertRedirects(self.client.get(link), "/schedule/")
+
+        # Today shows the checklist at zero.
+        self.assertContains(self.client.get("/dashboard/"), "0 of 5 done")
+
+        # Waking hours, past midnight, and one class.
+        self.client.post("/schedule/", {"save_profile": "1", "day_start": "09:00", "day_end": "01:00"})
+        self.client.post("/schedule/", {
+            "add_block": "1", "label": "CSE 3311", "kind": "class", "weekday": TEST_DAY.weekday(),
+            "start_time": "11:00", "end_time": "12:20",
+        })
+        self.assertContains(self.client.get("/dashboard/"), "1 of 5 done")
+
+        # Something to watch, from Discover.
+        arrival = CatalogItem.objects.get(title="Arrival")
+        self.client.post(f"/media/{arrival.pk}/add/")
+        self.assertContains(self.client.get("/dashboard/"), "2 of 5 done")
+
+        # A suggestion for a day that is all ahead of us.
+        self.client.post("/suggestions/refresh/", {"date": str(TEST_DAY), "next": f"/calendar/?date={TEST_DAY}"})
+        suggestion = Suggestion.objects.get(user__username="fresh")
+        self.assertEqual(suggestion.backlog_item.title, "Arrival")
+        self.assertContains(self.client.get("/dashboard/"), "3 of 5 done")
+
+        # Onto the calendar, then done.
+        self.client.post(f"/suggestions/{suggestion.pk}/accept/")
+        self.assertContains(self.client.get("/dashboard/"), "4 of 5 done")
+        self.client.post(f"/suggestions/{suggestion.pk}/done/")
+        dashboard = self.client.get("/dashboard/")
+        self.assertNotContains(dashboard, "Getting started")
+
+        # It is finished, so it is waiting for a review, and the time is on Progress.
+        item = BacklogItem.objects.get(user__username="fresh")
+        self.assertEqual(item.status, BacklogItem.Status.COMPLETED)
+        self.assertContains(self.client.get("/reviews/"), "Finished, not reviewed yet")
+        self.client.post(f"/reviews/{item.pk}/write/", {"rating": 5, "recommend": "yes", "headline": "Great"})
+        self.assertContains(self.client.get("/reviews/"), "Worth the time")
+        self.assertContains(self.client.get("/progress/"), "1h 56m")
+
+        # And they can get back in if they forget the password.
+        self.client.post("/accounts/logout/")
+        self.client.post("/accounts/password_reset/", {"email": "fresh@mavs.uta.edu"})
+        self.assertEqual(len(mail.outbox), 2)

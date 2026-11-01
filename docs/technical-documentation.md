@@ -1643,6 +1643,11 @@ in parallel:
 - **One suggestion per gap.** A free day with no commitments is one long gap
   and gets one proposal. Splitting long gaps would need a policy for where
   to cut.
+- **An overnight day is split at midnight.** With a bedtime past midnight
+  the free time on each date is two stretches, so a sitting cannot cross
+  midnight. A film that only fits from 23:00 to 01:00 is not offered.
+- **Shared reviews show the username.** There is no display name or
+  anonymous option; "Share with other students" is the only control.
 - **SQLite and a single container.** Fine for the class scale; a second
   app container would corrupt the file. Moving to PostgreSQL means adding a
   driver and a `DATABASE_URL` style setting.

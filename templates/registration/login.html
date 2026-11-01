@@ -9,6 +9,9 @@
     {{ form.as_p }}
     <button class="btn">Sign in</button>
   </form>
-  <p class="mt-4 text-sm text-muted">New here? <a href="{% url 'register' %}">Create an account</a>.</p>
+  <p class="mt-4 text-sm text-muted">
+    New here? <a href="{% url 'register' %}">Create an account</a>.
+    <a class="ml-2" href="{% url 'password_reset' %}">Forgot your password?</a>
+  </p>
 </section>
 {% endblock %}

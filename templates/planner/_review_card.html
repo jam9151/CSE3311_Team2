@@ -1,0 +1,39 @@
+{# Needs: review. Optional: show_user (name the reviewer), editable (link to edit). #}
+<article class="card flex flex-col gap-2">
+  <div class="flex flex-wrap items-center gap-1.5">
+    <span class="pill pill-{{ review.backlog_item.media_type }}">{{ review.backlog_item.get_media_type_display }}</span>
+    {% if review.recommend is not None %}
+      <span class="pill {% if review.recommend %}pill-good{% else %}pill-bad{% endif %}">{{ review.verdict }}</span>
+    {% endif %}
+    {% if review.contains_spoilers %}<span class="pill pill-warn">Spoilers</span>{% endif %}
+  </div>
+  <h3 class="font-semibold">
+    {% if review.backlog_item.catalog_item %}
+      <a href="{{ review.backlog_item.catalog_item.get_absolute_url }}">{{ review.backlog_item.title }}</a>
+    {% else %}
+      {{ review.backlog_item.title }}
+    {% endif %}
+  </h3>
+  <div class="tracking-widest text-warn" aria-label="{{ review.rating }} out of 5">
+    {% for _ in review.star_range %}&#9733;{% endfor %}<span class="text-line">{% for _ in review.empty_star_range %}&#9733;{% endfor %}</span>
+    <span class="text-sm tracking-normal text-muted"> {{ review.rating }}/5</span>
+  </div>
+  {% if review.headline %}<p class="font-medium">{{ review.headline }}</p>{% endif %}
+  {% if review.body %}
+    {% if review.contains_spoilers %}
+      <details class="text-sm text-muted">
+        <summary class="cursor-pointer text-accent">Show the review (spoilers)</summary>
+        <p class="mt-1 whitespace-pre-line">{{ review.body }}</p>
+      </details>
+    {% else %}
+      <p class="whitespace-pre-line text-sm text-muted">{{ review.body }}</p>
+    {% endif %}
+  {% endif %}
+  <p class="mt-auto text-xs text-muted">
+    {% if show_user %}{{ review.user.username }} &middot; {% endif %}{{ review.created_at|date:"M j, Y" }}
+    {% if editable %}
+      &middot; <a href="{% url 'write_review' review.backlog_item.pk %}">Edit</a>
+      {% if not review.shared %}&middot; only you can see this{% endif %}
+    {% endif %}
+  </p>
+</article>

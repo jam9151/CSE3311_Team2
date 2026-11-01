@@ -3,9 +3,20 @@ from django.shortcuts import redirect
 from .verification import is_verified
 
 # Pages an unverified user still needs: the holding page, the link in the
-# email, resending it, signing out, and the reminders poll (which is empty for
-# them anyway and would otherwise log a redirect every minute).
-EXEMPT_URL_NAMES = {"verify_pending", "verify_email", "resend_verification", "logout", "reminders_json"}
+# email, resending it, signing out, the reminders poll (which is empty for
+# them anyway and would otherwise log a redirect every minute), and the
+# password reset pages, which also confirm the address when they succeed.
+EXEMPT_URL_NAMES = {
+    "verify_pending",
+    "verify_email",
+    "resend_verification",
+    "logout",
+    "reminders_json",
+    "password_reset",
+    "password_reset_done",
+    "password_reset_confirm",
+    "password_reset_complete",
+}
 
 
 class EmailVerificationMiddleware:

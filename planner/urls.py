@@ -10,6 +10,7 @@ urlpatterns = [
     path("verify/resend/", views.resend_verification, name="resend_verification"),
     path("verify/<str:token>/", views.verify_email, name="verify_email"),
     path("dashboard/", views.dashboard, name="dashboard"),
+    path("dashboard/walkthrough/hide/", views.dismiss_walkthrough, name="dismiss_walkthrough"),
     # Discover and media details
     path("discover/", views.discover, name="discover"),
     path("media/<slug:slug>/", views.catalog_detail, name="catalog_detail"),

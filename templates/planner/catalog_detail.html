@@ -30,6 +30,12 @@
           <span>{{ item.rating }}/10</span>
         </div>
       {% endif %}
+      {% if community.count %}
+        <div class="row">
+          <div><strong>Students say</strong><p class="text-xs text-muted">{{ community.count }} shared review{{ community.count|pluralize }}</p></div>
+          <span>{{ community.average }}/5</span>
+        </div>
+      {% endif %}
       <div class="row">
         <div><strong>Fits today?</strong><p class="text-xs text-muted">Against your longest free gap</p></div>
         {% if fits_today is None %}
@@ -44,7 +50,7 @@
 
     <section class="card">
       {% if entry %}
-        <p class="mb-3 text-sm text-muted">On your backlog at priority {{ entry.priority }} ({{ entry.priority_label }}).</p>
+        <p class="mb-3 text-sm text-muted">On your backlog at {{ entry.priority_display }}.</p>
         <div class="flex gap-2">
           <a class="btn btn-sm btn-secondary" href="{% url 'backlog_edit' entry.pk %}">Edit</a>
           <form method="post" action="{% url 'backlog_delete' entry.pk %}">
@@ -59,6 +65,44 @@
           <input type="hidden" name="next" value="{{ request.get_full_path }}">
           <button class="btn">Add to my backlog</button>
         </form>
+      {% endif %}
+    </section>
+  </div>
+
+  {# Reviews sit under the description. Placed last so the sidebar keeps the first row. #}
+  <div class="space-y-5 lg:col-start-1">
+    {% if my_review %}
+      <section>
+        <div class="card-head"><h2>Your review</h2></div>
+        {% include "planner/_review_card.html" with review=my_review editable=True %}
+      </section>
+    {% elif entry and entry.status == "completed" %}
+      <section class="card">
+        <div class="card-head"><h2>Your review</h2></div>
+        <p class="text-sm text-muted">
+          You finished this.
+          <a href="{% url 'write_review' entry.pk %}?next={{ request.get_full_path|urlencode }}">Say whether it was worth the time</a>.
+        </p>
+      </section>
+    {% endif %}
+
+    <section>
+      <div class="card-head">
+        <h2>What other students thought</h2>
+        {% if community.count %}
+          <span class="text-sm text-muted">
+            {{ community.average }}/5 from {{ community.count }} review{{ community.count|pluralize }}{% if community.recommend_percent is not None %} &middot; {{ community.recommend_percent }}% say worth it{% endif %}
+          </span>
+        {% endif %}
+      </div>
+      {% if community.reviews %}
+        <div class="grid gap-3.5 sm:grid-cols-2">
+          {% for review in community.reviews %}
+            {% include "planner/_review_card.html" with review=review show_user=True %}
+          {% endfor %}
+        </div>
+      {% else %}
+        <p class="empty">No shared reviews of this yet. Finish it and yours could be the first.</p>
       {% endif %}
     </section>
   </div>

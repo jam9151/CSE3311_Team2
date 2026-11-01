@@ -41,12 +41,19 @@ class RegisterForm(UserCreationForm):
 
 
 class ProfileForm(forms.ModelForm):
-    """Waking hours. These bound the window free time is searched in."""
+    """Waking hours. These bound the window free time is searched in.
+
+    A bedtime earlier in the clock than the wake-up time is read as past
+    midnight: up by 10:00 and in bed by 02:00 is a sixteen hour day that ends
+    in the small hours of the next date. Only the same time twice is refused,
+    since that is either no day at all or all of it.
+    """
 
     class Meta:
         model = Profile
         fields = ["day_start", "day_end"]
         labels = {"day_start": "I am usually up by", "day_end": "I am usually in bed by"}
+        help_texts = {"day_end": "A bedtime earlier than your wake-up time, like 2:00 AM, counts as after midnight."}
         widgets = {
             "day_start": forms.TimeInput(attrs={"type": "time"}),
             "day_end": forms.TimeInput(attrs={"type": "time"}),
@@ -55,8 +62,8 @@ class ProfileForm(forms.ModelForm):
     def clean(self):
         cleaned = super().clean()
         start, end = cleaned.get("day_start"), cleaned.get("day_end")
-        if start and end and start >= end:
-            raise forms.ValidationError("Your bedtime needs to be after your wake-up time.")
+        if start and end and start == end:
+            raise forms.ValidationError("Your bedtime and wake-up time can't be the same time.")
         return cleaned
 
 
@@ -136,14 +143,43 @@ class CommitmentForm(forms.ModelForm):
 
 
 class ReviewForm(forms.ModelForm):
+    # Declared here so the picker is exactly five stars, with no blank option.
+    rating = forms.TypedChoiceField(
+        label="Rating out of 5", choices=Review.RATING_CHOICES, coerce=int, widget=forms.RadioSelect
+    )
+    # The app's own question, asked straight. Stored as True/False on the model.
+    recommend = forms.TypedChoiceField(
+        label="Was it worth the time?",
+        choices=[("yes", "Yes, worth it"), ("no", "Not really")],
+        coerce=lambda value: value == "yes",
+        widget=forms.RadioSelect,
+    )
+
     class Meta:
         model = Review
-        fields = ["rating", "body"]
-        labels = {"rating": "Rating out of 5", "body": "What did you think?"}
-        widgets = {
-            "rating": forms.NumberInput(attrs={"min": 1, "max": 5}),
-            "body": forms.Textarea(attrs={"rows": 5, "placeholder": "Worth the time?"}),
+        fields = ["rating", "recommend", "headline", "body", "contains_spoilers", "shared"]
+        labels = {
+            "rating": "Rating out of 5",
+            "headline": "In one line",
+            "body": "What did you think?",
+            "contains_spoilers": "This review has spoilers",
+            "shared": "Share with other students",
         }
+        help_texts = {
+            "headline": "",
+            "shared": "Shown on the catalog page for this title, with your username.",
+        }
+        widgets = {
+            "rating": forms.RadioSelect,
+            "headline": forms.TextInput(attrs={"placeholder": "Slow start, worth sticking with"}),
+            "body": forms.Textarea(attrs={"rows": 5, "placeholder": "What worked, what didn't, who it's for."}),
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # A saved yes/no comes back as a bool; the radio needs its string.
+        if self.instance.pk and self.instance.recommend is not None:
+            self.initial["recommend"] = "yes" if self.instance.recommend else "no"
 
 
 class CatalogSearchForm(forms.Form):

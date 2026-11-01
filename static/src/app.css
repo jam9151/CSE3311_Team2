@@ -65,6 +65,9 @@
   input, select {
     color-scheme: dark;
   }
+  input:where([type="checkbox"]) {
+    @apply size-4 shrink-0 accent-accent;
+  }
   form p {
     @apply mb-4;
   }
@@ -131,6 +134,41 @@
   .pill-book { @apply border-book/30 text-book; }
   .pill-game { @apply border-game/30 text-game; }
   .pill-accent { @apply border-accent/35 bg-accent/15 text-accent; }
+  .pill-good { @apply border-good/35 bg-good/10 text-good; }
+  .pill-bad { @apply border-bad/35 bg-bad/10 text-bad; }
+  .pill-warn { @apply border-warn/35 bg-warn/10 text-warn; }
+
+  /* The review form. Radios are hidden and the label is what you click; the
+     input stays in the page so the keyboard and screen readers still get it. */
+  .star-picker {
+    @apply flex gap-1;
+  }
+  .star-option {
+    @apply relative mb-0 cursor-pointer text-3xl leading-none text-line;
+  }
+  .star-option input {
+    @apply absolute inset-0 m-0 size-full cursor-pointer opacity-0;
+  }
+  .star-option:has(input:checked),
+  .star-option:has(~ .star-option input:checked) {
+    @apply text-warn;
+  }
+  .star-option:has(input:focus-visible) {
+    @apply rounded outline-2 outline-accent;
+  }
+  .choice-chip {
+    @apply mb-0 inline-flex cursor-pointer items-center rounded-lg border border-line bg-surface-2
+      px-3 py-1.5 text-sm text-ink;
+  }
+  .choice-chip input {
+    @apply sr-only;
+  }
+  .choice-chip:has(input:checked) {
+    @apply border-accent bg-accent/15 text-accent;
+  }
+  .choice-chip:has(input:focus-visible) {
+    @apply outline-2 outline-accent;
+  }
 
   .nav-link {
     @apply rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-ink hover:no-underline;

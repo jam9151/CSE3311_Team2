@@ -4,7 +4,7 @@
   <h3 class="mt-0.5 font-semibold">{{ suggestion.backlog_item.title }}</h3>
   <p class="text-sm text-muted">
     <span class="pill pill-{{ suggestion.backlog_item.media_type }}">{{ suggestion.backlog_item.get_media_type_display }}</span>
-    &middot; {{ suggestion.minutes }} min &middot; Priority {{ suggestion.backlog_item.priority }}
+    &middot; {{ suggestion.minutes }} min &middot; {{ suggestion.backlog_item.priority_display }}
   </p>
   <p class="mt-1.5 mb-3 text-sm text-muted">{{ suggestion.reason }}</p>
 

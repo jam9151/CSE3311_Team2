@@ -61,7 +61,10 @@ probably hasn't been rebuilt yet.
 
 `docs/specification-and-design.md` is the write-up: inputs and outputs, data
 structures, use cases and screen transitions. `docs/specification-and-design.pdf`
-is the same thing built for handing in.
+is the same thing built for handing in. `docs/iteration2-spec-design-testing.md`
+is the Iteration 2 report, `docs/technical-documentation.md` the full technical
+reference, and `docs/iteration3-cold-start-test.md` the script for the
+Iteration 3 user test with classmates.
 
 To rebuild the PDF after editing the markdown:
 
@@ -76,16 +79,17 @@ mermaid diagrams are drawn by a real browser.
 
 | Feature | Status |
 | --- | --- |
-| User accounts | done, `@mavs.uta.edu` only, confirmed by email link |
+| User accounts | done, `@mavs.uta.edu` only, confirmed by email link, forgot-password by email |
+| First-use walkthrough | done, a five-step checklist on Today that ticks itself off |
 | Media search | done, filter by type / genre / length, paged, real titles via `import_catalog` |
 | Media details | done, shows whether it fits your free time today |
 | Visual calendar | done, month grid + day panel |
-| Weekly schedule | done, recurring blocks and one-off commitments, both editable |
-| Priority system | done, 1-5, editable from the backlog list |
+| Weekly schedule | done, recurring blocks and one-off commitments, both editable, bedtime can be past midnight |
+| Priority system | done, P1 to P5 with a label, written the same way everywhere, editable from the backlog list |
 | Free time detection | done |
 | Accept/reject suggestions | done, rejections feed back into the scoring |
 | Plan the week | done, one click plans the next 7 days, accept one by one or all at once |
-| Review manager | done |
+| Review manager | done, stars, "worth the time?", headline, spoiler fold, shared with other students on the catalog page |
 | Progress | done, time logged, streaks, finished counts, breakdown by type |
 | Notifications | partly done, reminders while a tab is open, no background push yet |
 
@@ -196,6 +200,28 @@ Book genres come from Open Library's subject tags and are approximate. Game
 playtimes are what RAWG's players report, so a few are off. Catalog data is
 credited in the footer, which TMDB's and RAWG's terms ask for.
 
+## Getting started checklist
+
+A new account sees a five-step checklist at the top of Today: add busy time,
+add something to the backlog, ask for a suggestion, add it to the calendar,
+mark it done. Each step is ticked from the data (`walkthrough()` in
+`planner/services.py`), so doing things in a different order still counts,
+and the card goes away by itself once all five are done. "Hide this" puts it
+away early; that is the `walkthrough_dismissed` flag on the profile, and
+untick it in the admin to bring the card back for someone.
+
+## Reviews
+
+Finishing something puts it under "Finished, not reviewed yet" on Reviews. A
+review is a star rating, a yes or no to "was it worth the time?", a one-line
+headline, the longer text, and two switches: spoilers, which folds the text
+away behind a click, and share, which is on by default and shows the review
+to other students on the catalog page for the same title, with the username.
+The catalog page averages the shared reviews and says what share said it was
+worth it. The Reviews page can be filtered by type and sorted by date, rating
+or title, and the summary at the top is the average and the share of "worth
+it" across everything you've written.
+
 ## Email
 
 New accounts get a confirmation link by email and are held on a "check your
@@ -226,6 +252,16 @@ Other providers work too, set the host, user and password they give you.
 
 To confirm someone by hand, tick `email_verified` on their profile in the
 admin.
+
+**Forgot password.** The sign-in page links to it. It asks for the email,
+always says "check your email" whether or not an account uses that address
+(so nobody can use it to find out who has an account), and sends a one-use
+link that lasts a few hours. Opening it and choosing a new password also
+signs the person in, and confirms their email if it wasn't already, since
+opening a link sent to the address proves it is theirs just as well as the
+sign-up link does. Signed-in users change their password from the link next
+to their name in the menu. These are Django's own views with this app's
+pages, in `planner/account_urls.py`.
 
 To test sign-up over and over, wipe the accounts between tries:
 
@@ -280,6 +316,14 @@ Two steps, both in `planner/services.py`.
 (classes, shifts, one-off stuff) and it subtracts all of that from your waking
 hours, plus anything you've already accepted. What's left are the gaps. Gaps
 under 20 minutes get thrown away.
+
+Waking hours can run past midnight: up by 10:00 and in bed by 02:00 is read
+as a day that ends in the small hours of the next date, and the form only
+refuses the same time twice. Internally the day is split at midnight
+(`waking_windows()`), so every calendar date has two stretches, 00:00 to
+02:00 and 10:00 to midnight, and every gap, suggestion and reminder stays on
+one date. The cost is that a gap across midnight is two gaps, so a film that
+would only fit by starting at 23:00 and ending at 01:00 is not suggested.
 
 `suggest_for_day()` then picks something for each gap. It scores every backlog
 item on priority, whether you've already started it, how much of the gap it

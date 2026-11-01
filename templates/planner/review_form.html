@@ -2,19 +2,67 @@
 {% block title %}Review {{ item.title }} · MediaFlow{% endblock %}
 
 {% block content %}
-<section class="card mx-auto my-8 max-w-md">
-  <p class="eyebrow">Review</p>
+<section class="card mx-auto my-8 max-w-lg">
+  <p class="eyebrow">{% if review %}Edit your review{% else %}Review{% endif %}</p>
   <h1 class="text-2xl font-bold tracking-tight">{{ item.title }}</h1>
   <p class="mb-5 text-sm text-muted">
     <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
     {{ item.estimated_minutes }} min
+    {% if item.catalog_item %}&middot; <a href="{{ item.catalog_item.get_absolute_url }}">catalog page</a>{% endif %}
   </p>
+
   <form method="post">
     {% csrf_token %}
-    {{ form.as_p }}
+    {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
+    {{ form.non_field_errors }}
+
+    <fieldset class="mb-4">
+      <legend class="mb-1 block text-sm text-muted">{{ form.rating.label }}</legend>
+      <div class="star-picker" role="radiogroup" aria-label="{{ form.rating.label }}">
+        {% for radio in form.rating %}
+          <label class="star-option" title="{{ radio.choice_label }} out of 5">
+            {{ radio.tag }}<span aria-hidden="true">&#9733;</span><span class="sr-only">{{ radio.choice_label }}</span>
+          </label>
+        {% endfor %}
+      </div>
+      {{ form.rating.errors }}
+    </fieldset>
+
+    <fieldset class="mb-4">
+      <legend class="mb-1 block text-sm text-muted">{{ form.recommend.label }}</legend>
+      <div class="flex flex-wrap gap-2">
+        {% for radio in form.recommend %}
+          <label class="choice-chip">{{ radio.tag }}<span>{{ radio.choice_label }}</span></label>
+        {% endfor %}
+      </div>
+      {{ form.recommend.errors }}
+    </fieldset>
+
+    <p>
+      <label for="{{ form.headline.id_for_label }}">{{ form.headline.label }}</label>
+      {{ form.headline }}
+      {{ form.headline.errors }}
+    </p>
+    <p>
+      <label for="{{ form.body.id_for_label }}">{{ form.body.label }}</label>
+      {{ form.body }}
+      {{ form.body.errors }}
+    </p>
+    <p class="flex items-center gap-2">
+      {{ form.contains_spoilers }}
+      <label class="mb-0" for="{{ form.contains_spoilers.id_for_label }}">{{ form.contains_spoilers.label }}</label>
+    </p>
+    <p class="flex items-start gap-2">
+      {{ form.shared }}
+      <label class="mb-0" for="{{ form.shared.id_for_label }}">
+        {{ form.shared.label }}
+        <span class="helptext">{{ form.shared.help_text }}</span>
+      </label>
+    </p>
+
     <div class="flex gap-2">
       <button class="btn">Save review</button>
-      <a class="btn btn-ghost" href="{% url 'reviews' %}">Cancel</a>
+      <a class="btn btn-ghost" href="{% if next_url %}{{ next_url }}{% else %}{% url 'reviews' %}{% endif %}">Cancel</a>
     </div>
   </form>
 </section>

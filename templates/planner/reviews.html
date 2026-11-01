@@ -2,10 +2,30 @@
 {% block title %}Reviews · MediaFlow{% endblock %}
 
 {% block content %}
-<header class="mb-5">
-  <p class="eyebrow">Reviews</p>
-  <h1 class="text-3xl font-bold tracking-tight">What you've finished</h1>
-  <p class="text-muted">Everything you got to, and what you thought of it.</p>
+<header class="mb-5 flex flex-wrap items-end justify-between gap-4">
+  <div>
+    <p class="eyebrow">Reviews</p>
+    <h1 class="text-3xl font-bold tracking-tight">What you've finished</h1>
+    <p class="text-muted">Everything you got to, and whether it was worth the time.</p>
+  </div>
+  {% if summary.count %}
+    <dl class="flex gap-5 text-sm">
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-muted">Reviews</dt>
+        <dd class="text-xl font-bold tracking-tight">{{ summary.count }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs uppercase tracking-wider text-muted">Average</dt>
+        <dd class="text-xl font-bold tracking-tight">{{ summary.average }}<span class="text-sm text-muted">/5</span></dd>
+      </div>
+      {% if summary.recommend_percent is not None %}
+        <div>
+          <dt class="text-xs uppercase tracking-wider text-muted">Worth it</dt>
+          <dd class="text-xl font-bold tracking-tight">{{ summary.recommend_percent }}%</dd>
+        </div>
+      {% endif %}
+    </dl>
+  {% endif %}
 </header>
 
 {% if awaiting %}
@@ -26,21 +46,29 @@
   </section>
 {% endif %}
 
+{% if summary.count %}
+  <form class="mb-4 flex flex-wrap items-center gap-2" method="get">
+    <a class="btn btn-sm {% if not active_type %}btn-secondary{% else %}btn-ghost{% endif %}" href="?sort={{ sort }}">All</a>
+    {% for value, label in media_types %}
+      <a class="btn btn-sm {% if active_type == value %}btn-secondary{% else %}btn-ghost{% endif %}" href="?type={{ value }}&sort={{ sort }}">{{ label }}</a>
+    {% endfor %}
+    <label class="sr-only" for="review-sort">Sort by</label>
+    {% if active_type %}<input type="hidden" name="type" value="{{ active_type }}">{% endif %}
+    <select id="review-sort" name="sort" class="ml-auto w-auto py-1" onchange="this.form.submit()">
+      {% for value, label in sorts %}
+        <option value="{{ value }}" {% if sort == value %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </form>
+{% endif %}
+
 <div class="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-3">
   {% for review in reviews %}
-    <article class="card flex flex-col gap-2">
-      <div><span class="pill pill-{{ review.backlog_item.media_type }}">{{ review.backlog_item.get_media_type_display }}</span></div>
-      <h3 class="font-semibold">{{ review.backlog_item.title }}</h3>
-      <div class="tracking-widest text-warn">
-        {% for _ in review.star_range %}&#9733;{% endfor %}<span class="text-sm tracking-normal text-muted"> {{ review.rating }}/5</span>
-      </div>
-      {% if review.body %}<p class="text-sm text-muted">{{ review.body }}</p>{% endif %}
-      <p class="mt-auto text-xs text-muted">
-        {{ review.created_at|date:"M j, Y" }} &middot; <a href="{% url 'write_review' review.backlog_item.pk %}">Edit</a>
-      </p>
-    </article>
+    {% include "planner/_review_card.html" with review=review editable=True %}
   {% empty %}
-    <p class="empty sm:col-span-2 lg:col-span-3">No reviews yet. Finish something and it'll show up here.</p>
+    <p class="empty sm:col-span-2 lg:col-span-3">
+      {% if active_type %}No {{ active_type }} reviews yet.{% else %}No reviews yet. Finish something and it'll show up here.{% endif %}
+    </p>
   {% endfor %}
 </div>
 {% endblock %}

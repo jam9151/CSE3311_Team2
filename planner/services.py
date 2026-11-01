@@ -13,7 +13,7 @@ from datetime import datetime, time, timedelta
 from django.db.models import Avg, Count, F
 from django.utils import timezone
 
-from .models import MIN_USABLE_MINUTES, BacklogItem, MediaType, Suggestion
+from .models import MIN_USABLE_MINUTES, BacklogItem, MediaType, Review, Suggestion
 
 @dataclass(frozen=True)
 class ScoringWeights:
@@ -88,7 +88,10 @@ class Interval:
 
     @property
     def minutes(self):
-        return _to_minutes(self.end) - _to_minutes(self.start)
+        # A gap that runs to midnight is stored ending 23:59, the last minute
+        # there is, so count that minute too.
+        end = END_OF_DAY if self.end == time(23, 59) else _to_minutes(self.end)
+        return end - _to_minutes(self.start)
 
     @property
     def label(self):
@@ -134,6 +137,28 @@ def waking_window(user):
     return time(8, 0), time(23, 0)
 
 
+# One minute past the last minute of the day. A window or a gap that runs to
+# midnight ends here, and _from_minutes turns it into 23:59 for storage.
+END_OF_DAY = 24 * 60
+
+
+def waking_windows(user):
+    """The stretches of one calendar day the user is awake, in minutes from midnight.
+
+    A normal day is one stretch, 08:00 to 23:00. A bedtime past midnight, say
+    up by 10:00 and in bed by 02:00, means two stretches on every calendar
+    day: the small hours, 00:00 to 02:00, left over from the evening before,
+    and the main part, 10:00 to midnight. Splitting at midnight keeps every
+    gap, suggestion and reminder on one date, which is what the calendar,
+    the day panel and the reminder poll all assume.
+    """
+    start, end = waking_window(user)
+    start_min, end_min = _to_minutes(start), _to_minutes(end)
+    if end_min > start_min:
+        return [(start_min, end_min)]
+    return [(0, end_min), (start_min, END_OF_DAY)]
+
+
 def busy_blocks(user, day, include_planned=True):
     """Everything taking up time on `day`, sorted by start."""
     blocks = []
@@ -169,16 +194,20 @@ def free_intervals(user, day, include_planned=True):
     Overlapping blocks fall out of this for free, since the cursor only ever
     moves forward.
     """
-    start_of_day, end_of_day = waking_window(user)
-    cursor = _to_minutes(start_of_day)
-    limit = _to_minutes(end_of_day)
-
     # No point offering a gap that already went by.
-    if day == timezone.localdate():
-        cursor = max(cursor, _to_minutes(timezone.localtime().time()))
+    now = _to_minutes(timezone.localtime().time()) if day == timezone.localdate() else 0
 
+    blocks = busy_blocks(user, day, include_planned=include_planned)
     gaps = []
-    for block in busy_blocks(user, day, include_planned=include_planned):
+    for window_start, window_end in waking_windows(user):
+        gaps.extend(_gaps_in_window(blocks, max(window_start, now), window_end))
+    return gaps
+
+
+def _gaps_in_window(blocks, cursor, limit):
+    """The free stretches between `cursor` and `limit`, both in minutes."""
+    gaps = []
+    for block in blocks:
         block_start = _to_minutes(block.start)
         block_end = _to_minutes(block.end)
         if block_end <= cursor:
@@ -599,4 +628,98 @@ def progress_stats(user, today=None, days=30):
         "by_type": by_type,
         "recent_finished": list(completed.order_by(F("completed_at").desc(nulls_last=True))[:5]),
         "in_progress": list(user.backlog_items.filter(status=BacklogItem.Status.IN_PROGRESS)[:5]),
+    }
+
+
+# ------------------------------------------------------------ first use
+
+# The getting-started checklist on Today, in the order a new account should do
+# them. Each step is done when the data says so, not when a box is ticked, so
+# someone who skips ahead is credited for it.
+WALKTHROUGH_STEPS = [
+    {
+        "key": "schedule",
+        "title": "Tell us when you're busy",
+        "detail": "Add a class, a shift or a standing plan on My week. Everything left over is free time.",
+        "url_name": "weekly_schedule",
+        "link": "Open My week",
+    },
+    {
+        "key": "backlog",
+        "title": "Put something on your backlog",
+        "detail": "Pick a film, show, book or game from Discover, or add one by hand.",
+        "url_name": "discover",
+        "link": "Browse Discover",
+    },
+    {
+        "key": "suggest",
+        "title": "Ask for a suggestion",
+        "detail": "Press Suggest something on Today, or Plan my week on My week.",
+        "url_name": "dashboard",
+        "link": "Go to Today",
+    },
+    {
+        "key": "accept",
+        "title": "Add one to your calendar",
+        "detail": "Add to calendar puts the sitting on your day. Not today eases off that title for a while.",
+        "url_name": "dashboard",
+        "link": "See today's suggestions",
+    },
+    {
+        "key": "done",
+        "title": "Mark it done",
+        "detail": "On the day, Today lists what you planned. Mark done logs the time on Progress.",
+        "url_name": "dashboard",
+        "link": "Go to Today",
+    },
+]
+
+
+def walkthrough(user):
+    """The checklist for Today, or None once it is finished or hidden.
+
+    Returns {"steps": [...], "done": n, "total": n, "next": step} where each
+    step is a WALKTHROUGH_STEPS entry plus "done" and "current".
+    """
+    profile = getattr(user, "profile", None)
+    if profile and profile.walkthrough_dismissed:
+        return None
+
+    statuses = set(user.suggestions.values_list("status", flat=True).distinct())
+    done_by_key = {
+        "schedule": user.recurring_blocks.exists() or user.commitments.exists(),
+        "backlog": user.backlog_items.exists(),
+        "suggest": bool(statuses),
+        "accept": bool(statuses & {Suggestion.Status.ACCEPTED, Suggestion.Status.DONE}),
+        "done": Suggestion.Status.DONE in statuses,
+    }
+    steps = [{**step, "done": done_by_key[step["key"]], "current": False} for step in WALKTHROUGH_STEPS]
+    remaining = [step for step in steps if not step["done"]]
+    if not remaining:
+        return None
+    remaining[0]["current"] = True
+    return {"steps": steps, "done": len(steps) - len(remaining), "total": len(steps), "next": remaining[0]}
+
+
+# ------------------------------------------------------------ reviews
+
+def shared_reviews(catalog_item, exclude_user=None, limit=5):
+    """Other students' shared reviews of one catalog title, newest first, with a summary.
+
+    Returns {"reviews": [...], "count": n, "average": 4.2 or None,
+    "recommend_percent": 80 or None}. The summary counts every shared review;
+    the list is capped at `limit`.
+    """
+    rows = Review.objects.filter(backlog_item__catalog_item=catalog_item, shared=True).select_related(
+        "user", "backlog_item"
+    )
+    if exclude_user is not None:
+        rows = rows.exclude(user=exclude_user)
+    totals = rows.aggregate(count=Count("id"), average=Avg("rating"))
+    verdicts = [recommend for recommend in rows.values_list("recommend", flat=True) if recommend is not None]
+    return {
+        "reviews": list(rows[:limit]),
+        "count": totals["count"],
+        "average": round(totals["average"], 1) if totals["average"] is not None else None,
+        "recommend_percent": round(sum(verdicts) / len(verdicts) * 100) if verdicts else None,
     }

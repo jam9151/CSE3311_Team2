@@ -1,0 +1,40 @@
+{# Needs: walkthrough (from services.walkthrough). Shown on Today until every step is done or it is hidden. #}
+<section class="card mb-5 border-accent/40" aria-labelledby="walkthrough-heading">
+  <div class="card-head">
+    <div>
+      <p class="eyebrow">Getting started</p>
+      <h2 id="walkthrough-heading">{{ walkthrough.done }} of {{ walkthrough.total }} done</h2>
+    </div>
+    <form method="post" action="{% url 'dismiss_walkthrough' %}">
+      {% csrf_token %}
+      <input type="hidden" name="next" value="{% url 'dashboard' %}">
+      <button class="btn-link text-xs">Hide this</button>
+    </form>
+  </div>
+
+  <div class="mb-3 h-1.5 overflow-hidden rounded-full bg-surface-2" role="progressbar"
+       aria-valuemin="0" aria-valuemax="{{ walkthrough.total }}" aria-valuenow="{{ walkthrough.done }}">
+    <div class="h-full bg-accent" style="width: {% widthratio walkthrough.done walkthrough.total 100 %}%"></div>
+  </div>
+
+  <ol class="grid gap-2 sm:grid-cols-2 lg:grid-cols-5">
+    {% for step in walkthrough.steps %}
+      <li class="rounded-lg border p-3 text-sm
+        {% if step.current %}border-accent bg-accent/10{% elif step.done %}border-line bg-surface-2 text-muted{% else %}border-line{% endif %}">
+        <div class="mb-1 flex items-center gap-2">
+          <span class="grid size-5 shrink-0 place-items-center rounded-full text-[0.65rem] font-bold
+            {% if step.done %}bg-good text-on-accent{% elif step.current %}bg-accent text-on-accent{% else %}border border-line text-muted{% endif %}">
+            {% if step.done %}&#10003;{% else %}{{ forloop.counter }}{% endif %}
+          </span>
+          <strong class="{% if step.done %}line-through{% endif %}">{{ step.title }}</strong>
+        </div>
+        {% if not step.done %}
+          <p class="text-xs text-muted">{{ step.detail }}</p>
+          {% if step.current %}
+            <a class="mt-2 inline-block text-xs font-semibold" href="{% url step.url_name %}">{{ step.link }} &rarr;</a>
+          {% endif %}
+        {% endif %}
+      </li>
+    {% endfor %}
+  </ol>
+</section>

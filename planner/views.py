@@ -1,13 +1,15 @@
+import smtplib
 from datetime import date as date_cls
 from datetime import datetime, timedelta
 
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import login
+from django.contrib.auth import views as auth_views
 from django.contrib.auth.decorators import login_required
 from django.core.paginator import Paginator
 from django.db import DatabaseError, connection
-from django.db.models import Q
+from django.db.models import Avg, Count, Q
 from django.http import Http404, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.utils import timezone
@@ -31,9 +33,11 @@ from .services import (
     month_grid,
     progress_stats,
     suggest_for_day,
+    shared_reviews,
     suggest_for_week,
     total_free_minutes,
     upcoming_reminders,
+    walkthrough,
 )
 from .verification import is_verified, read_token, seconds_until_resend, send_verification_email
 
@@ -163,10 +167,21 @@ def dashboard(request):
         "backlog_count": backlog.count(),
         "in_progress": backlog.filter(status=BacklogItem.Status.IN_PROGRESS)[:4],
         "recent_reviews": request.user.reviews.select_related("backlog_item")[:3],
+        "walkthrough": walkthrough(request.user),
         "needs_schedule": not request.user.recurring_blocks.exists(),
         "reminders": upcoming_reminders(request.user),
     }
     return render(request, "planner/dashboard.html", context)
+
+
+@login_required
+@require_POST
+def dismiss_walkthrough(request):
+    profile, _ = Profile.objects.get_or_create(user=request.user)
+    profile.walkthrough_dismissed = True
+    profile.save(update_fields=["walkthrough_dismissed"])
+    messages.info(request, "Hidden. Every page it pointed at is still in the menu above.")
+    return redirect(request.POST.get("next") or "dashboard")
 
 
 @login_required
@@ -338,12 +353,16 @@ def _fits_today(user, catalog_item):
 @login_required
 def catalog_detail(request, slug):
     item = get_object_or_404(CatalogItem, slug=slug)
+    entry = request.user.backlog_items.filter(catalog_item=item).select_related("review").first()
+    my_review = getattr(entry, "review", None) if entry else None
     return render(
         request,
         "planner/catalog_detail.html",
         {
             "item": item,
-            "entry": request.user.backlog_items.filter(catalog_item=item).first(),
+            "entry": entry,
+            "my_review": my_review,
+            "community": shared_reviews(item, exclude_user=request.user),
             "fits_today": _fits_today(request.user, item),
         },
     )
@@ -378,7 +397,12 @@ def backlog(request):
     return render(
         request,
         "planner/backlog.html",
-        {"items": items, "active_status": status or "", "statuses": BacklogItem.Status.choices},
+        {
+            "items": items,
+            "active_status": status or "",
+            "statuses": BacklogItem.Status.choices,
+            "priorities": BacklogItem.PRIORITY_CHOICES,
+        },
     )
 
 
@@ -616,16 +640,47 @@ def stats(request):
     return render(request, "planner/stats.html", {"stats": progress_stats(request.user)})
 
 
+REVIEW_SORTS = {
+    "newest": ("Newest first", "-created_at"),
+    "highest": ("Highest rated", "-rating"),
+    "lowest": ("Lowest rated", "rating"),
+    "title": ("Title A-Z", "backlog_item__title"),
+}
+
+
 @login_required
 def reviews(request):
+    rows = request.user.reviews.select_related("backlog_item", "backlog_item__catalog_item")
+    media_type = request.GET.get("type", "")
+    if media_type in MediaType.values:
+        rows = rows.filter(backlog_item__media_type=media_type)
+    else:
+        media_type = ""
+    sort = request.GET.get("sort", "newest")
+    if sort not in REVIEW_SORTS:
+        sort = "newest"
+    rows = rows.order_by(REVIEW_SORTS[sort][1], "-created_at")
+
+    everything = request.user.reviews
+    verdicts = [value for value in everything.values_list("recommend", flat=True) if value is not None]
+    totals = everything.aggregate(count=Count("id"), average=Avg("rating"))
     return render(
         request,
         "planner/reviews.html",
         {
-            "reviews": request.user.reviews.select_related("backlog_item"),
+            "reviews": rows,
             "awaiting": request.user.backlog_items.filter(
                 status=BacklogItem.Status.COMPLETED, review__isnull=True
             ),
+            "active_type": media_type,
+            "media_types": MediaType.choices,
+            "sort": sort,
+            "sorts": [(key, label) for key, (label, _) in REVIEW_SORTS.items()],
+            "summary": {
+                "count": totals["count"],
+                "average": round(totals["average"], 1) if totals["average"] is not None else None,
+                "recommend_percent": round(sum(verdicts) / len(verdicts) * 100) if verdicts else None,
+            },
         },
     )
 
@@ -648,5 +703,69 @@ def write_review(request, pk):
             item.minutes_completed = item.estimated_minutes
             item.save()
         messages.success(request, "Review saved.")
-        return redirect("reviews")
-    return render(request, "planner/review_form.html", {"form": form, "item": item})
+        return redirect(request.POST.get("next") or "reviews")
+    return render(
+        request,
+        "planner/review_form.html",
+        {"form": form, "item": item, "review": instance, "next_url": request.GET.get("next", "")},
+    )
+
+
+# ------------------------------------------------------------ passwords
+
+# Django's own reset and change views, with this app's templates and a couple
+# of touches: a mail server that is down becomes a message rather than a 500,
+# and a reset that succeeds also confirms the email, since opening the link
+# proves the address is theirs just as well as the sign-up link does.
+
+
+class PasswordResetView(auth_views.PasswordResetView):
+    template_name = "registration/password_reset_form.html"
+    email_template_name = "registration/password_reset_email.txt"
+    subject_template_name = "registration/password_reset_subject.txt"
+
+    def form_valid(self, form):
+        try:
+            return super().form_valid(form)
+        except (smtplib.SMTPException, OSError):
+            messages.error(self.request, "We couldn't send the email right now. Please try again in a minute.")
+            return self.form_invalid(form)
+
+
+class PasswordResetDoneView(auth_views.PasswordResetDoneView):
+    template_name = "registration/password_reset_done.html"
+
+    def get_context_data(self, **kwargs):
+        context = super().get_context_data(**kwargs)
+        context["console_email"] = settings.EMAIL_BACKEND.endswith("console.EmailBackend")
+        return context
+
+
+class PasswordResetConfirmView(auth_views.PasswordResetConfirmView):
+    template_name = "registration/password_reset_confirm.html"
+    post_reset_login = True
+
+    def form_valid(self, form):
+        response = super().form_valid(form)
+        profile, _ = Profile.objects.get_or_create(user=self.user)
+        if not profile.email_verified:
+            profile.email_verified = True
+            profile.save(update_fields=["email_verified"])
+        messages.success(self.request, "Password changed. You're signed in.")
+        return response
+
+
+class PasswordResetCompleteView(auth_views.PasswordResetCompleteView):
+    template_name = "registration/password_reset_complete.html"
+
+
+class PasswordChangeView(auth_views.PasswordChangeView):
+    template_name = "registration/password_change_form.html"
+
+    def form_valid(self, form):
+        messages.success(self.request, "Password changed.")
+        return super().form_valid(form)
+
+
+class PasswordChangeDoneView(auth_views.PasswordChangeDoneView):
+    template_name = "registration/password_change_done.html"

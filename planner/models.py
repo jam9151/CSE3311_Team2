@@ -42,6 +42,14 @@ class Profile(models.Model):
         validators=[MinValueValidator(1), MaxValueValidator(120)],
         help_text="How many minutes ahead to remind me",
     )
+    # The getting-started checklist on Today. It also goes away by itself once
+    # every step is done, so this only records an explicit "hide this".
+    walkthrough_dismissed = models.BooleanField(default=False)
+
+    @property
+    def is_overnight(self):
+        """True when bedtime is past midnight, e.g. up by 10:00, in bed by 02:00."""
+        return self.day_end <= self.day_start
 
     def __str__(self):
         return f"Profile for {self.user.username}"
@@ -112,6 +120,8 @@ class BacklogItem(models.Model):
         PAUSED = "paused", "Paused"
 
     PRIORITY_LABELS = {5: "Must play next", 4: "High", 3: "Normal", 2: "Low", 1: "Someday"}
+    # The one way a priority is written anywhere in the app: "P4 · High".
+    PRIORITY_CHOICES = [(value, f"P{value} · {label}") for value, label in PRIORITY_LABELS.items()]
 
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="backlog_items")
     # Null for anything the user typed in by hand instead of adding from search.
@@ -121,7 +131,7 @@ class BacklogItem(models.Model):
     title = models.CharField(max_length=200)
     media_type = models.CharField(max_length=20, choices=MediaType.choices)
     priority = models.PositiveSmallIntegerField(
-        default=3, validators=[MinValueValidator(1), MaxValueValidator(5)]
+        default=3, choices=PRIORITY_CHOICES, validators=[MinValueValidator(1), MaxValueValidator(5)]
     )
     estimated_minutes = models.PositiveIntegerField(help_text="Estimated total time to finish")
     minutes_completed = models.PositiveIntegerField(default=0)
@@ -155,6 +165,10 @@ class BacklogItem(models.Model):
     @property
     def priority_label(self):
         return self.PRIORITY_LABELS.get(self.priority, "Normal")
+
+    @property
+    def priority_display(self):
+        return f"P{self.priority} · {self.priority_label}"
 
     @property
     def rules(self):
@@ -281,11 +295,30 @@ class Suggestion(models.Model):
 
 
 class Review(models.Model):
+    """What someone thought once they finished something.
+
+    One per backlog item. A review can be shared, in which case other students
+    see it (without the username's backlog) on the catalog page for the same
+    title, so the question the app asks, "worth the time?", gets answered by
+    people with the same amount of it.
+    """
+
+    RATING_CHOICES = [(1, "1"), (2, "2"), (3, "3"), (4, "4"), (5, "5")]
+
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="reviews")
     backlog_item = models.OneToOneField(BacklogItem, on_delete=models.CASCADE, related_name="review")
-    rating = models.PositiveSmallIntegerField(validators=[MinValueValidator(1), MaxValueValidator(5)])
+    rating = models.PositiveSmallIntegerField(
+        choices=RATING_CHOICES, validators=[MinValueValidator(1), MaxValueValidator(5)]
+    )
+    headline = models.CharField(max_length=120, blank=True, help_text="One line, like a title for the review")
     body = models.TextField(blank=True)
+    # The app's own question. Null only for reviews written before it was asked.
+    recommend = models.BooleanField(null=True, blank=True, help_text="Worth the time?")
+    contains_spoilers = models.BooleanField(default=False)
+    # Shown to other students on the catalog page for the same title.
+    shared = models.BooleanField(default=True, help_text="Let other students see this review")
     created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
         ordering = ["-created_at"]
@@ -294,6 +327,16 @@ class Review(models.Model):
     def star_range(self):
         # Templates can't do range(), so hand them something to loop over.
         return range(self.rating)
+
+    @property
+    def empty_star_range(self):
+        return range(5 - self.rating)
+
+    @property
+    def verdict(self):
+        if self.recommend is None:
+            return ""
+        return "Worth the time" if self.recommend else "Not worth the time"
 
     def __str__(self):
         return f"{self.backlog_item.title} - {self.rating}/5"

@@ -32,8 +32,8 @@ class SuggestionAdmin(admin.ModelAdmin):
 
 @admin.register(Review)
 class ReviewAdmin(admin.ModelAdmin):
-    list_display = ["backlog_item", "user", "rating", "created_at"]
-    list_filter = ["rating"]
+    list_display = ["backlog_item", "user", "rating", "recommend", "shared", "created_at"]
+    list_filter = ["rating", "recommend", "shared"]
 
 
 @admin.register(Profile)

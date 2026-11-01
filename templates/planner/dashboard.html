@@ -14,7 +14,9 @@
   </form>
 </header>
 
-{% if needs_schedule %}
+{% if walkthrough %}
+  {% include "planner/_walkthrough.html" %}
+{% elif needs_schedule %}
   <div class="mb-5 rounded-lg border border-accent/30 bg-accent/10 px-3.5 py-2.5 text-sm">
     We can't find your free time yet. <a href="{% url 'weekly_schedule' %}">Tell us when you're busy</a> and the rest follows.
   </div>
@@ -106,7 +108,7 @@
             <strong>{{ item.title }}</strong>
             <p class="text-xs text-muted">
               <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
-              {{ item.remaining_minutes }} min left &middot; {{ item.priority_label }}
+              {{ item.remaining_minutes }} min left &middot; {{ item.priority_display }}
             </p>
             {% if item.minutes_completed %}
               <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-2">
