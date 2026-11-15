@@ -86,6 +86,7 @@ class Command(BaseCommand):
         words = {
             "created": "added",
             "updated": "refreshed",
+            "kept": "kept as edited by hand",
             "duplicate": "already in the catalog",
             "would add": "would add",
         }

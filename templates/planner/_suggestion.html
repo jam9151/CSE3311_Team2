@@ -1,10 +1,11 @@
 {# Needs: suggestion, next_url (where to come back to after accept/reject). #}
 <article class="mb-3 rounded-lg border border-l-[3px] border-line border-l-accent bg-surface-2 px-4 py-3.5 last:mb-0">
-  <span class="text-sm font-semibold tabular-nums text-accent">{{ suggestion.start_time|time:"g:i A" }} – {{ suggestion.end_time|time:"g:i A" }}</span>
+  <span class="text-sm font-semibold tabular-nums text-accent">{{ suggestion.start_time|time:"g:i A" }} – {{ suggestion.end_time|time:"g:i A" }}{% if suggestion.crosses_midnight %} <span class="text-xs font-normal text-muted">(past midnight)</span>{% endif %}</span>
   <h3 class="mt-0.5 font-semibold">{{ suggestion.backlog_item.title }}</h3>
   <p class="text-sm text-muted">
     <span class="pill pill-{{ suggestion.backlog_item.media_type }}">{{ suggestion.backlog_item.get_media_type_display }}</span>
     &middot; {{ suggestion.minutes }} min &middot; {{ suggestion.backlog_item.priority_display }}
+    {% if suggestion.backlog_item.progress_label %}&middot; {{ suggestion.backlog_item.progress_label }}{% endif %}
   </p>
   <p class="mt-1.5 mb-3 text-sm text-muted">{{ suggestion.reason }}</p>
 
@@ -14,14 +15,23 @@
         {% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">
         <button class="btn btn-sm">Add to calendar</button>
       </form>
+      <form method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'later' %}">
+        {% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">
+        <button class="btn btn-sm btn-ghost" title="Not now, nothing held against it: back from tomorrow">Later</button>
+      </form>
       <form method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'reject' %}">
         {% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">
-        <button class="btn btn-sm btn-ghost">Not today</button>
+        <button class="btn btn-sm btn-ghost" title="Ease off this title for a couple of weeks">Not today</button>
       </form>
     {% elif suggestion.status == "accepted" %}
       <form method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'done' %}">
         {% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">
         <button class="btn btn-sm btn-secondary">Mark done</button>
+      </form>
+      <a class="btn btn-sm btn-ghost" href="{% url 'plan_session' %}?move={{ suggestion.pk }}&next={{ next_url|urlencode }}" aria-label="Move {{ suggestion.backlog_item.title }}">Move</a>
+      <form method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'cancel' %}">
+        {% csrf_token %}<input type="hidden" name="next" value="{{ next_url }}">
+        <button class="btn btn-sm btn-ghost" title="Take it off the calendar" aria-label="Take {{ suggestion.backlog_item.title }} off the calendar">Remove</button>
       </form>
       <span class="pill pill-accent">Planned</span>
     {% else %}

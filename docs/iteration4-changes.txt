@@ -1,0 +1,147 @@
+MediaFlow - Iteration 4 (final) - things done (as of 2026-11-16, branch iteration-4)
+
+FEATURES, FIRST ROUND
+1. Today is customisable. Each panel (the numbers row, Suggestions for
+   today, Did these happen?, Planned today, Your day, Backlog, Coming up)
+   has a Hide link, and a "Customize this page" box lists every panel with a
+   checkbox. Hidden panels are remembered per user. The heading and Suggest
+   something always show.
+2. The calendar shows how busy a day is: commitments (amber) ahead of
+   planned sittings (green) in each cell, three per cell and "+N more", with
+   the day's busy time in the corner. Commitments over midnight show on both
+   days.
+3. Click a day to add to it: "+ Plan something" puts a backlog item on that
+   date at a time you pick; "+ Commitment" opens the commitment form on that
+   date and comes back to the calendar.
+4. Long free gaps are split: a sitting, a 15-minute break, the next best
+   thing, while at least 45 minutes remain.
+5. Display name and anonymous reviews.
+6. Log time by hand, on a date, counted on Progress.
+7. Background push reminders, opt-in with VAPID keys and a sender process.
+8. Catalog edits survive imports ("Keep my edits"); seed_catalog no longer
+   crashes on a duplicated title.
+9. PostgreSQL option through DATABASE_URL and a compose overlay.
+
+FEATURES, SECOND ROUND
+10. Move or remove a planned sitting. Planned cards have Move (the plan form
+    prefilled, with a date field, its own slot not counted as busy) and
+    Remove (frees the time, nothing held against the title).
+11. "Did these happen?" on Today: planned sittings whose time has passed and
+    were never marked. Yes logs the time; Didn't happen removes it.
+12. Exceptions to recurring blocks: skip one block on one date from the
+    calendar day panel, or mark the whole day off. Skipped blocks show
+    struck through with restore, and My week lists coming exceptions.
+13. Episode and chapter tracking: position derived from minutes and the
+    unit length ("Episode 5 of 24 next"), an optional per-item unit length
+    (a 60-minute drama), "episodes already finished" on the edit form, and
+    suggestions that say which episodes they cover.
+14. Weekly goal: minutes per week set on My week or Settings, shown as a bar
+    on Today and a card on Progress.
+15. Community ratings in the scoring: half a priority step, scaled by other
+    students' average rating of the same catalog title.
+16. Sittings across midnight on overnight schedules. The evening gap knows
+    how far into the next date it may run; a film that only fits 22:30 to
+    01:00 is offered, stored on the date it starts, and blocks the small
+    hours of the next date once accepted.
+17. Settings page gathering waking hours, weekly goal, display name, Today
+    panels, reminders, subscribed browsers (with remove), password change,
+    data export and account deletion. The nav links to it.
+18. Install as an app: web manifest, generated icons (manage.py make_icons),
+    theme colour and apple-touch-icon.
+19. Export my data as one JSON file; delete my account after typing the
+    password, with everything cascading.
+20. Import a calendar (.ics) on My week: weekly repeats become recurring
+    blocks (kind guessed from the title), one-off events in the next year
+    become commitments, all-day and past events are left out with a count.
+21. Import a Letterboxd or Goodreads export on Backlog: catalog matches
+    preferred by year, the rest added by title, Goodreads shelves become
+    statuses and ratings become private reviews.
+22. Look up a title on demand from Discover: asks Open Library, TMDB and
+    RAWG for the search term right now and adds what comes back.
+
+CODE AND DATA
+23. Migrations 0006 (panels, display name, anonymous, TimeLog, time
+    defaults), 0007 (catalog lock, push models), 0008 (unit_minutes,
+    weekly_goal_minutes, BlockException).
+24. planner/imports.py: the .ics and CSV readers and the apply functions.
+    catalog_import gained search() per source, lookup_title, saved_item and
+    source_keys. services gained Interval.extension and usable,
+    _end_time_for, community_ratings, stale_sittings, week totals.
+25. New routes: suggestions/<pk>/cancel, calendar/plan?move=, schedule/
+    block/<pk>/skip, schedule/skip/<pk>/delete, schedule/day-off, schedule/
+    import, backlog/import, discover/lookup, settings, settings/export,
+    settings/delete, plus the push and panel routes from the first round.
+26. MEDIA_URL set (the live-server harness needs it on Windows).
+
+TESTING
+27. Unit suite: 600 tests. New classes this round: MoveAndCancelTests,
+    FollowUpTests, BlockExceptionTests, UnitTrackingTests, WeeklyGoalTests,
+    CommunityScoringTests, MidnightSittingTests, SettingsPageTests,
+    ExportAndDeleteTests, InstallableAppTests, IcsReadTests,
+    ScheduleImportViewTests, MediaCsvReadTests, MediaImportApplyTests,
+    LookupTests, LookupViewTests.
+28. Five Playwright browser tests in planner/tests_e2e.py, run in CI.
+
+OPERATIONS AND DOCS
+29. docker/backup.sh, docs/runbook.md, docs/iteration4-report.md, README
+    and technical documentation updated.
+
+FEATURES, THIRD ROUND (polish and the last ideas)
+31. Mobile pass. Calendar cells show a busy dot instead of the label on
+    phones, with a swipe hint; backlog action rows wrap; buttons never
+    break mid-word; tap targets are at least 32px.
+32. Accessibility pass. A skip-to-content link, a main landmark that
+    receives focus, one visible focus ring for everything keyboard-reachable,
+    aria-current on the active nav link and the selected calendar day,
+    calendar cells described for screen readers ("Tuesday, October 6, 2h
+    busy, 1 item"), named Remove, Move, skip and restore buttons, and a
+    polite live region for flash messages.
+33. Later. A third answer to a suggestion, next to Not today: the title is
+    back in the running from tomorrow with nothing held against it.
+34. Time-of-day preference. The scoring learns from what you accept and
+    turn down per media type and part of the day (morning, afternoon,
+    evening, night) over the last sixty days; half a priority step, once
+    there are at least two answers to go on.
+35. Semester view. Busy hours per week for the term from classes, shifts,
+    exceptions and commitments, with the busiest and lightest weeks and the
+    average, 4 to 26 weeks, linked from My week and the calendar.
+36. Series continuation. Catalog rows carry a series and a position; films
+    get it from TMDB collections on import. The catalog page shows what
+    comes next, and Reviews offers the next title after you finish one.
+37. Watch together. From a catalog page, name a classmate and the planner
+    lists the next two weeks' stretches free for both; pick one and they
+    get an invite on Today. Accepting puts an accepted sitting on both
+    calendars (and the title on their backlog). Decline and withdraw too.
+38. Read-only JSON API. Bearer tokens made and revoked on Settings, stored
+    hashed and shown once. /api/v1/me/, backlog/, day/?date=, progress/.
+
+CODE AND DATA, THIRD ROUND
+39. Migration 0009: snoozed_until on BacklogItem, series and series_order
+    on CatalogItem, WatchInvite and ApiToken.
+40. ScoringWeights gained time_of_day_bonus, time_of_day_memory_days and
+    time_of_day_min_answers; services gained part_of_day,
+    time_of_day_preferences, next_in_series, semester_overview,
+    shared_slots, accept_invite, make_api_token and user_for_api_token.
+41. New routes: suggestions/<pk>/later, media/<pk>/watch-together,
+    invites/<pk>/<action>, semester, settings/tokens/new,
+    settings/tokens/<pk>/revoke, api/v1/{me,backlog,day,progress}.
+
+TESTING, THIRD ROUND
+42. 38 more unit tests: AccessibilityTests, SnoozeTests, TimeOfDayTests,
+    SemesterViewTests, SeriesTests, WatchTogetherTests, ApiTests. Unit suite
+    is 639 tests; the five browser tests still pass.
+
+FINISHING POLISH
+44. Phone navigation: one row on a laptop, two short rows on a phone with
+    the page links scrolling sideways; the username hidden below 640px.
+45. Light theme: a second palette that follows the device, with a System /
+    Light / Dark picker in the footer and on Settings, saved in the browser
+    and applied before the first paint. Native pickers follow the scheme.
+46. Column headers on the calendar and progress tables, a real (focus-only)
+    button behind every auto-submitting select, the smallest text raised
+    from 9.6px to 10.4px, and out-of-month dates a little less faint.
+47. ThemeAndNavTests (7 tests). Unit suite is 646 tests.
+
+NOT DONE
+43. The classmate user session (needs people) and a live PostgreSQL run
+    (needs the Docker daemon running on this machine).

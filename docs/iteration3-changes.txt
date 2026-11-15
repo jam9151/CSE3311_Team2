@@ -1,0 +1,57 @@
+MediaFlow - Iteration 3 - things done (as of 2026-11-01)
+
+FEATURES
+1. Overnight waking hours. A bedtime earlier on the clock than the wake-up
+   time is read as past midnight. Free time is split at midnight so each
+   date keeps its own gaps, suggestions and reminders.
+2. Forgot-password by email. One-use expiring link, same "check your email"
+   reply whether or not the address exists, signs the user in on success and
+   confirms their email at the same time. A mail server outage shows a
+   message instead of an error page.
+3. Change password for signed-in users, linked from the menu.
+4. First-use walkthrough. A five-step checklist on Today, ticked from the
+   data in any order, gone when finished or hidden with one click.
+5. Richer reviews. Five-star picker, required "worth the time?" verdict,
+   headline, spoiler fold, and a share switch.
+6. Community reviews. Shared reviews appear on the catalog page for the same
+   title, with an average rating and the share who said it was worth it.
+7. Reviews page summary, filter by media type, and sort by date, rating or
+   title.
+8. One priority format everywhere: "P4 - High", in the backlog dropdown,
+   edit form, suggestion cards, Today and catalog pages.
+
+CODE AND DATA
+9. Migration 0005: walkthrough flag on Profile, five new Review fields,
+   priority choices.
+10. Auth routes moved to a dedicated planner/account_urls.py so the password
+    pages use the app's own templates rather than the admin's.
+11. Verification middleware exempts the password reset pages.
+12. New styles for the star picker, verdict chips, verdict pills and
+    checkboxes; built CSS rebuilt.
+
+TESTING
+13. 62 new tests across six classes: overnight free time, password reset and
+    change, walkthrough, rich and shared reviews, priority format, and a
+    cold-start end-to-end flow. Suite is 403 tests, all passing, CI green on
+    main.
+14. Manual run-through in a browser of the full new-user path on a throwaway
+    account.
+
+DOCUMENTATION
+15. Cold-start user test protocol: docs/iteration3-cold-start-test.md, with
+    tasks, observations, questions, results sheet and pass targets.
+16. README feature table and new sections for the checklist, reviews,
+    forgot-password and overnight hours.
+17. Two new known limitations in the technical documentation.
+
+DEPLOYMENT
+18. Found the live copy: mediaflow-web on megatron behind the shared Caddy
+    via the proxy overlay. Discovered the checkout directory had been deleted
+    while the container kept running.
+19. Re-cloned the repo to /home/kirk-admin/projects/CSE3311_Team2, restored
+    .env, and rebuilt the container on the existing data volume with the new
+    code and migration.
+
+STILL OPEN
+20. The live user test with classmates, and the Iteration 3 write-up that
+    reports its results.

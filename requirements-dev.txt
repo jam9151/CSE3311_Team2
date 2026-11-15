@@ -1,0 +1,4 @@
+# Browser-level tests (planner/tests_e2e.py). Not needed to run the app.
+#   pip install -r requirements-dev.txt
+#   python -m playwright install chromium
+playwright>=1.47,<2

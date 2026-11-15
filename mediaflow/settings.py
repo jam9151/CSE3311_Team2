@@ -14,7 +14,7 @@ from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
 
-from .env import clean_smtp_password, env_bool, env_int, env_list, load_env_file
+from .env import clean_smtp_password, database_from_url, env_bool, env_int, env_list, load_env_file
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -70,16 +70,26 @@ MIDDLEWARE = [
     "planner.middleware.EmailVerificationMiddleware",
 ]
 ROOT_URLCONF = "mediaflow.urls"
-TEMPLATES = [{"BACKEND": "django.template.backends.django.DjangoTemplates", "DIRS": [BASE_DIR / "templates"], "APP_DIRS": True, "OPTIONS": {"context_processors": ["django.template.context_processors.request", "django.contrib.auth.context_processors.auth", "django.contrib.messages.context_processors.messages"]}}]
+TEMPLATES = [{"BACKEND": "django.template.backends.django.DjangoTemplates", "DIRS": [BASE_DIR / "templates"], "APP_DIRS": True, "OPTIONS": {"context_processors": ["django.template.context_processors.request", "django.contrib.auth.context_processors.auth", "django.contrib.messages.context_processors.messages", "planner.context_processors.push"]}}]
 WSGI_APPLICATION = "mediaflow.wsgi.application"
 
-# A path, so a host with a persistent disk can keep the database on it.
-DATABASES = {
-    "default": {
-        "ENGINE": "django.db.backends.sqlite3",
-        "NAME": Path(os.environ.get("DATABASE_PATH") or BASE_DIR / "db.sqlite3"),
+# SQLite by default, as a path so a host with a persistent disk can keep the
+# database on it. DATABASE_URL switches to PostgreSQL (or another SQLite file)
+# and wins over DATABASE_PATH when both are set, which is what the
+# docker-compose.postgres.yml overlay relies on.
+_database_url = os.environ.get("DATABASE_URL", "").strip()
+if _database_url:
+    try:
+        DATABASES = {"default": database_from_url(_database_url, BASE_DIR)}
+    except ValueError as error:
+        raise ImproperlyConfigured(str(error)) from None
+else:
+    DATABASES = {
+        "default": {
+            "ENGINE": "django.db.backends.sqlite3",
+            "NAME": Path(os.environ.get("DATABASE_PATH") or BASE_DIR / "db.sqlite3"),
+        }
     }
-}
 
 # Off in development so throwaway accounts can use any password. Real accounts
 # get Django's standard four rules: not too like their details, at least eight
@@ -102,6 +112,10 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
+# No uploads anywhere in the app, but an empty MEDIA_URL makes the live-server
+# test harness treat every request as a media file first, and on Windows a
+# verification link (which has | in it) then dies in url2pathname.
+MEDIA_URL = "media/"
 # Where collectstatic gathers everything for the web server to hand out.
 STATIC_ROOT = Path(os.environ.get("DJANGO_STATIC_ROOT") or BASE_DIR / "staticfiles")
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
@@ -179,3 +193,11 @@ EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_HOST_PASSWORD = clean_smtp_password(EMAIL_HOST, os.environ.get("EMAIL_HOST_PASSWORD", ""))
 EMAIL_USE_TLS = env_bool("EMAIL_USE_TLS", default=True)
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "MediaFlow <noreply@mediaflow.local>")
+
+# Background push reminders. Off unless both VAPID keys are set, in which case
+# the browser can subscribe and `manage.py send_push_reminders --loop` does the
+# sending. Generate a pair with `manage.py vapid_keys`.
+VAPID_PUBLIC_KEY = os.environ.get("VAPID_PUBLIC_KEY", "").strip()
+VAPID_PRIVATE_KEY = os.environ.get("VAPID_PRIVATE_KEY", "").strip()
+VAPID_CLAIMS_EMAIL = os.environ.get("VAPID_CLAIMS_EMAIL", "").strip() or EMAIL_HOST_USER or "admin@mediaflow.local"
+PUSH_ENABLED = bool(VAPID_PUBLIC_KEY and VAPID_PRIVATE_KEY)

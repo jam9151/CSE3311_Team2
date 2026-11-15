@@ -1,0 +1,21 @@
+{% extends "base.html" %}
+{% block title %}Delete account · MediaFlow{% endblock %}
+
+{% block content %}
+<section class="card mx-auto my-8 max-w-md border-bad/40">
+  <p class="eyebrow">Settings</p>
+  <h1 class="mb-2 text-2xl font-bold tracking-tight">Delete your account</h1>
+  <p class="mb-4 text-sm text-muted">
+    This removes your backlog, planned sittings, logged time, reviews (shared ones included), schedule and
+    settings. It cannot be undone. <a href="{% url 'export_data' %}">Download your data</a> first if you want a copy.
+  </p>
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    <div class="flex gap-2">
+      <button class="btn btn-danger border-bad/50">Delete my account</button>
+      <a class="btn btn-ghost" href="{% url 'settings' %}">Keep it</a>
+    </div>
+  </form>
+</section>
+{% endblock %}

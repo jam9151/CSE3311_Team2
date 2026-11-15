@@ -30,10 +30,10 @@
     {% endif %}
   {% endif %}
   <p class="mt-auto text-xs text-muted">
-    {% if show_user %}{{ review.user.username }} &middot; {% endif %}{{ review.created_at|date:"M j, Y" }}
+    {% if show_user %}{{ review.reviewer_name }} &middot; {% endif %}{{ review.created_at|date:"M j, Y" }}
     {% if editable %}
       &middot; <a href="{% url 'write_review' review.backlog_item.pk %}">Edit</a>
-      {% if not review.shared %}&middot; only you can see this{% endif %}
+      {% if not review.shared %}&middot; only you can see this{% elif review.anonymous %}&middot; shared without your name{% endif %}
     {% endif %}
   </p>
 </article>

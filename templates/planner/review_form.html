@@ -56,7 +56,14 @@
       {{ form.shared }}
       <label class="mb-0" for="{{ form.shared.id_for_label }}">
         {{ form.shared.label }}
-        <span class="helptext">{{ form.shared.help_text }}</span>
+        <span class="helptext">Shown on the catalog page for this title, signed <strong>{{ public_name }}</strong>. <a href="{% url 'reviews' %}">Change the name</a>.</span>
+      </label>
+    </p>
+    <p class="flex items-start gap-2 pl-6">
+      {{ form.anonymous }}
+      <label class="mb-0" for="{{ form.anonymous.id_for_label }}">
+        {{ form.anonymous.label }}
+        <span class="helptext">{{ form.anonymous.help_text }}</span>
       </label>
     </p>
 

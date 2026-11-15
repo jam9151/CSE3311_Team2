@@ -32,6 +32,14 @@ jobs:
       - name: Tests
         run: python manage.py test
 
+      # The browser-level tests in planner/tests_e2e.py. They are skipped in
+      # the step above because Playwright is not installed yet; here it is.
+      - name: Browser tests
+        run: |
+          pip install -r requirements-dev.txt
+          python -m playwright install --with-deps chromium
+          python manage.py test planner.tests_e2e
+
       # Loads the settings the way a real deployment does and runs Django's own
       # security checks on them, counting warnings as failures. The values are
       # throwaways that only exist for this step.

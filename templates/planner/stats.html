@@ -6,10 +6,10 @@
 <header class="mb-5">
   <p class="eyebrow">Progress</p>
   <h1 class="text-3xl font-bold tracking-tight">How it's going</h1>
-  <p class="text-muted">Time comes from the sessions you mark done.</p>
+  <p class="text-muted">Time comes from the sessions you mark done and the time you log by hand.</p>
 </header>
 
-<div class="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+<div class="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-5">
   <div class="card">
     <div class="text-2xl font-bold tracking-tight">{{ stats.month_time }}</div>
     <div class="text-xs uppercase tracking-wider text-muted">Logged this month</div>
@@ -24,6 +24,20 @@
     <div class="text-2xl font-bold tracking-tight">{{ stats.current_streak }} day{{ stats.current_streak|pluralize }}</div>
     <div class="text-xs uppercase tracking-wider text-muted">Current streak</div>
     <p class="mt-1 text-xs text-muted">Best: {{ stats.best_streak }} day{{ stats.best_streak|pluralize }}</p>
+  </div>
+  <div class="card" data-week-goal>
+    <div class="text-2xl font-bold tracking-tight">{{ stats.week_time }}</div>
+    <div class="text-xs uppercase tracking-wider text-muted">This week</div>
+    {% if stats.weekly_goal %}
+      <p class="mt-1 text-xs {% if stats.goal_met %}text-good{% else %}text-muted{% endif %}">
+        {% if stats.goal_met %}Goal of {{ stats.weekly_goal_time }} met{% else %}{{ stats.goal_percent }}% of {{ stats.weekly_goal_time }}{% endif %}
+      </p>
+      <div class="mt-1.5 h-1 overflow-hidden rounded-full bg-surface-2">
+        <div class="h-full {% if stats.goal_met %}bg-good{% else %}bg-accent{% endif %}" style="width: {{ stats.goal_percent }}%"></div>
+      </div>
+    {% else %}
+      <p class="mt-1 text-xs text-muted"><a href="{% url 'weekly_schedule' %}">Set a weekly goal</a></p>
+    {% endif %}
   </div>
   <div class="card">
     <div class="text-2xl font-bold tracking-tight">{% if stats.average_rating is not None %}{{ stats.average_rating }}<span class="text-base font-normal text-muted"> / 5</span>{% else %}&mdash;{% endif %}</div>
@@ -76,7 +90,7 @@
       <summary class="cursor-pointer text-muted">Show as a table</summary>
       <table class="mt-2 w-full max-w-sm text-left">
         <thead class="text-xs uppercase tracking-wider text-muted">
-          <tr><th class="py-1 pr-4 font-medium">Day</th><th class="py-1 font-medium">Time logged</th></tr>
+          <tr><th scope="col" class="py-1 pr-4 font-medium">Day</th><th scope="col" class="py-1 font-medium">Time logged</th></tr>
         </thead>
         <tbody>
           {% for day in stats.logged_days %}
@@ -90,9 +104,9 @@
       <p class="mt-2 text-xs text-muted">Days with nothing logged are left out.</p>
     </details>
   {% else %}
-    <p class="empty">Nothing logged in the last 30 days. Mark a planned session done and it will show up here.</p>
+    <p class="empty">Nothing logged in the last 30 days. Mark a planned session done, or log time on a backlog item, and it will show up here.</p>
   {% endif %}
-  <p class="mt-3 text-xs text-muted">Minutes you type into a backlog item by hand aren't counted, because they have no date.</p>
+  <p class="mt-3 text-xs text-muted">Use <strong>Log time</strong> on the backlog for anything you did outside a planned session. The "minutes already done" box on an item's edit form has no date, so it isn't charted.</p>
 </section>
 
 <div class="grid items-start gap-5 lg:grid-cols-2">

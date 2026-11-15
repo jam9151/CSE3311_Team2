@@ -38,6 +38,16 @@ confirmed. Admin is at `/admin/`
 
 Tests: `python manage.py test`
 
+There is also a small set of browser-level tests in `planner/tests_e2e.py`
+that drive the real pages in a headless Chromium. They are skipped unless
+Playwright is installed:
+
+```powershell
+python -m pip install -r requirements-dev.txt
+python -m playwright install chromium
+python manage.py test planner.tests_e2e
+```
+
 ## Styles (Tailwind)
 
 The CSS is built with Tailwind. The built file, `static/css/app.css`, is
@@ -54,6 +64,11 @@ next build overwrites it. The colours live in the `@theme` block there
 (`bg-surface`, `text-muted`, `border-line` and so on), and the shared bits
 like `.btn`, `.card` and `.pill` are defined there too.
 
+There are two palettes. The `@theme` block is the dark one and the default;
+a light one overrides the same variables when the device prefers light, or
+when someone picks Light in the footer (saved in the browser, applied before
+the first paint). Add a colour to both or it will only exist in the dark.
+
 If you add a Tailwind class to a template and it doesn't show up, the CSS
 probably hasn't been rebuilt yet.
 
@@ -63,8 +78,10 @@ probably hasn't been rebuilt yet.
 structures, use cases and screen transitions. `docs/specification-and-design.pdf`
 is the same thing built for handing in. `docs/iteration2-spec-design-testing.md`
 is the Iteration 2 report, `docs/technical-documentation.md` the full technical
-reference, and `docs/iteration3-cold-start-test.md` the script for the
-Iteration 3 user test with classmates.
+reference, `docs/iteration3-cold-start-test.md` the script for the
+Iteration 3 user test with classmates, `docs/iteration4-report.md` the
+Iteration 4 (final) report, and `docs/runbook.md` how the live server is
+deployed, backed up and restored.
 
 To rebuild the PDF after editing the markdown:
 
@@ -81,17 +98,82 @@ mermaid diagrams are drawn by a real browser.
 | --- | --- |
 | User accounts | done, `@mavs.uta.edu` only, confirmed by email link, forgot-password by email |
 | First-use walkthrough | done, a five-step checklist on Today that ticks itself off |
-| Media search | done, filter by type / genre / length, paged, real titles via `import_catalog` |
+| Media search | done, filter by type / genre / length, paged, real titles via `import_catalog`, look a missing title up on the spot |
+| Backlog import | done, Letterboxd and Goodreads exports |
 | Media details | done, shows whether it fits your free time today |
-| Visual calendar | done, month grid + day panel |
-| Weekly schedule | done, recurring blocks and one-off commitments, both editable, bedtime can be past midnight |
+| Visual calendar | done, month grid with commitments and planned sittings in each day, busy time per day, click a day to plan something or add a commitment, skip a class or take a day off, move or remove a planned sitting |
+| Weekly schedule | done, recurring blocks and one-off commitments, both editable, bedtime can be past midnight, import an .ics calendar, exceptions per date |
 | Priority system | done, P1 to P5 with a label, written the same way everywhere, editable from the backlog list |
 | Free time detection | done |
-| Accept/reject suggestions | done, rejections feed back into the scoring |
+| Today page | done, every panel can be hidden or brought back per user, asks about planned sittings that were never marked, weekly goal bar, watch-together invites |
+| Watch together | done, invite a classmate to a title at a time the planner finds free for both; accepting puts it on both calendars |
+| Semester view | done, busy hours week by week for the term, busiest and lightest weeks |
+| API | done, read-only JSON for your backlog, day and progress with bearer tokens made on Settings |
+| Settings | done, one page for hours, goal, display name, panels, reminders, subscribed browsers, password, data export and account deletion |
+| Install as an app | done, web manifest and icons; add to home screen on a phone |
+| Accept/reject suggestions | done, with Later (no penalty, back tomorrow) next to Not today; rejections, other students' ratings and your own time-of-day habits feed into the scoring; a long free day gets several sittings with breaks between; a late film can run past midnight on an overnight schedule |
+| Series | done, "next in the series" on the catalog page and on Reviews once you finish one; filled from TMDB collections for films |
+| Episode tracking | done, "Episode 5 of 24 next" from minutes and a per-item episode length |
 | Plan the week | done, one click plans the next 7 days, accept one by one or all at once |
-| Review manager | done, stars, "worth the time?", headline, spoiler fold, shared with other students on the catalog page |
-| Progress | done, time logged, streaks, finished counts, breakdown by type |
-| Notifications | partly done, reminders while a tab is open, no background push yet |
+| Review manager | done, stars, "worth the time?", headline, spoiler fold, shared with other students on the catalog page under a display name or anonymously |
+| Progress | done, time logged from sittings and by hand on a date, streaks, finished counts, breakdown by type |
+| Notifications | done, reminders while a tab is open, and background push once the VAPID keys are set (see below) |
+
+## Background push reminders
+
+Out of the box, reminders only appear while a MediaFlow tab is open. With a
+VAPID key pair configured they also arrive through the browser's push service
+with the tab closed, on desktop and Android (iOS needs the site added to the
+home screen).
+
+```powershell
+python manage.py vapid_keys        # prints two lines, paste them into .env
+```
+
+Then set `VAPID_CLAIMS_EMAIL` to a contact address, restart, and keep the
+sender running: `python manage.py send_push_reminders --loop` locally, or
+`COMPOSE_PROFILES=push` in `.env` for Docker, which starts a `mediaflow-push`
+container beside the web one. On My week, once browser notifications are
+allowed, the reminders card says background reminders are on. Nothing
+changes for a deployment that leaves the keys unset.
+
+## PostgreSQL
+
+SQLite is the default and is fine for the class. To use PostgreSQL instead,
+set `DATABASE_URL` (it wins over `DATABASE_PATH`):
+
+```
+DATABASE_URL="postgres://mediaflow:password@localhost:5432/mediaflow"
+```
+
+In Docker, add `docker-compose.postgres.yml` to `COMPOSE_FILE` and set
+`POSTGRES_PASSWORD` in `.env`; it starts a `mediaflow-db` container and points
+the app at it. Moving existing data across is described in `docs/runbook.md`.
+
+## Backups and operations
+
+`docker/backup.sh` copies the live SQLite database out of the running
+container, safely, and keeps the last fourteen. `docs/runbook.md` has the
+deploy, rollback, backup and restore steps for the server, and what to do if
+the checkout goes missing again.
+
+## The JSON API
+
+Read-only, for a phone widget or a script. Make a token on Settings and send
+it as a bearer token:
+
+```
+curl -H "Authorization: Bearer mf_..." https://mediaflow.example.com/api/v1/me/
+```
+
+| Path | Gives |
+| --- | --- |
+| `/api/v1/me/` | username, display name, waking hours, weekly goal |
+| `/api/v1/backlog/?status=` | your backlog items with progress |
+| `/api/v1/day/?date=YYYY-MM-DD` | free gaps, busy blocks, planned and pending sittings for a date |
+| `/api/v1/progress/` | this week, this month, streaks, finished count |
+
+Tokens are stored hashed and shown once. Revoke them on Settings.
 
 ## Growing the catalog
 
@@ -127,7 +209,9 @@ scheduler needs:
 | Game | RAWG's average hours played, 1 to 300 hours |
 
 It is safe to run again. Each imported row remembers where it came from, so a
-second run refreshes it instead of adding a copy, which also means edits you
+second run refreshes it instead of adding a copy. A row you edit in the admin
+is marked "Keep my edits" and left alone by later imports; untick it to let
+them refresh it again. Otherwise edits you
 make to an imported row in the admin are overwritten. A title you entered by
 hand, or that came from the seed data, wins over an imported one with the same
 title, type and year. If a source fails partway, what was saved before the

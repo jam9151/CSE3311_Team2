@@ -11,16 +11,18 @@
     <a class="btn btn-sm btn-secondary" href="?year={{ previous_month.year }}&month={{ previous_month.month }}&date={{ selected|date:'Y-m-d' }}">&larr; Prev</a>
     <a class="btn btn-sm btn-secondary" href="{% url 'calendar' %}">Today</a>
     <a class="btn btn-sm btn-secondary" href="?year={{ next_month.year }}&month={{ next_month.month }}&date={{ selected|date:'Y-m-d' }}">Next &rarr;</a>
+    <a class="btn btn-sm btn-ghost" href="{% url 'semester' %}">Semester</a>
   </div>
 </header>
 
 <div class="grid items-start gap-5 lg:grid-cols-[3fr_2fr]">
-  <section class="card overflow-x-auto">
-    <table class="w-full min-w-[520px] table-fixed border-collapse">
+  <section class="card overflow-x-auto" aria-label="Month grid">
+    <p class="mb-2 text-xs text-muted sm:hidden">Swipe the grid sideways. Tap a day to see it below.</p>
+    <table class="w-full min-w-[448px] table-fixed border-collapse">
       <thead>
         <tr>
           {% for name in weekday_names %}
-            <th class="pb-2 text-[0.7rem] font-semibold uppercase tracking-wider text-muted">{{ name }}</th>
+            <th scope="col" class="pb-2 text-[0.7rem] font-semibold uppercase tracking-wider text-muted">{{ name }}</th>
           {% endfor %}
         </tr>
       </thead>
@@ -28,17 +30,28 @@
         {% for week in weeks %}
           <tr>
             {% for cell in week %}
-              <td class="h-22 border border-line p-0 align-top">
+              <td class="h-24 border border-line p-0 align-top sm:h-28">
                 <a href="?year={{ anchor.year }}&month={{ anchor.month }}&date={{ cell.date|date:'Y-m-d' }}"
-                   class="block h-full p-1.5 text-xs text-ink hover:bg-surface-2 hover:no-underline
-                          {% if cell.date == selected %}bg-accent/15 ring-1 ring-accent ring-inset{% endif %}">
-                  <span class="font-semibold tabular-nums
-                    {% if cell.is_today %}text-accent{% elif not cell.in_month %}text-muted/50{% endif %}">{{ cell.date|date:"j" }}</span>
-                  {% for suggestion in cell.planned|slice:":2" %}
-                    <span class="mt-1 block truncate rounded border-l-2 border-good bg-surface-2 px-1 py-px text-[0.68rem]">{{ suggestion.backlog_item.title }}</span>
+                   class="flex h-full flex-col p-1 text-xs text-ink hover:bg-surface-2 hover:no-underline sm:p-1.5
+                          {% if cell.date == selected %}bg-accent/15 ring-1 ring-accent ring-inset{% endif %}"
+                   aria-label="{{ cell.date|date:'l, F j' }}{% if cell.busy_label %}, {{ cell.busy_label }} busy{% endif %}{% if cell.entries %}, {{ cell.entries|length }} item{{ cell.entries|length|pluralize }}{% endif %}{% if cell.date == selected %}, selected{% endif %}"
+                   {% if cell.date == selected %}aria-current="date"{% endif %}
+                   title="{{ cell.date|date:'l, F j' }}{% if cell.busy_label %} · {{ cell.busy_label }} busy{% endif %}">
+                  <span class="flex items-baseline justify-between gap-1">
+                    <span class="font-semibold tabular-nums
+                      {% if cell.is_today %}text-accent{% elif not cell.in_month %}text-muted/60{% endif %}">{{ cell.date|date:"j" }}</span>
+                    {% if cell.busy_label %}
+                      <span class="hidden whitespace-nowrap text-[0.65rem] text-muted sm:inline" data-busy>{{ cell.busy_label }} busy</span>
+                      <span class="inline-block size-1.5 rounded-full bg-muted sm:hidden" aria-hidden="true"></span>
+                    {% endif %}
+                  </span>
+                  {% for entry in cell.entries|slice:":3" %}
+                    <span class="mt-1 block truncate rounded border-l-2 bg-surface-2 px-1 py-px text-[0.68rem]
+                      {% if entry.kind == 'commitment' %}border-warn{% else %}border-good{% endif %}"
+                      data-entry="{{ entry.kind }}">{{ entry.title }}</span>
                   {% endfor %}
-                  {% if cell.planned|length > 2 %}
-                    <span class="mt-1 block text-[0.65rem] text-muted">+{{ cell.planned|length|add:"-2" }} more</span>
+                  {% if cell.entries|length > 3 %}
+                    <span class="mt-1 block text-[0.65rem] text-muted">+{{ cell.entries|length|add:"-3" }} more</span>
                   {% endif %}
                 </a>
               </td>
@@ -47,6 +60,11 @@
         {% endfor %}
       </tbody>
     </table>
+    <p class="mt-3 flex flex-wrap gap-4 text-xs text-muted">
+      <span><span class="mr-1 inline-block h-2.5 w-0.5 bg-warn align-middle"></span>Commitment</span>
+      <span><span class="mr-1 inline-block h-2.5 w-0.5 bg-good align-middle"></span>Planned from your backlog</span>
+      <span>Busy time counts classes, shifts and commitments.</span>
+    </p>
   </section>
 
   <div class="space-y-4">
@@ -56,11 +74,42 @@
         <span class="pill pill-accent">{{ free_label }} free</span>
       </div>
 
+      <div class="mb-3 flex flex-wrap gap-2">
+        <a class="btn btn-sm" href="{% url 'plan_session' %}?date={{ selected|date:'Y-m-d' }}">+ Plan something</a>
+        <a class="btn btn-sm btn-secondary" href="{% url 'add_commitment' %}?date={{ selected|date:'Y-m-d' }}&next={% url 'calendar' %}%3Fdate%3D{{ selected|date:'Y-m-d' }}">+ Commitment</a>
+        {% if has_recurring %}
+          <form method="post" action="{% url 'day_off' %}">
+            {% csrf_token %}
+            <input type="hidden" name="date" value="{{ selected|date:'Y-m-d' }}">
+            <button class="btn btn-sm btn-ghost" title="Skip every class and shift on this date">Day off</button>
+          </form>
+        {% endif %}
+      </div>
+
       <ul class="text-sm">
         {% for block in plan.busy %}
           <li class="row">
             <span class="w-32 shrink-0 text-xs tabular-nums text-muted">{{ block.start|time:"g:i A" }}–{{ block.end|time:"g:i A" }}</span>
             <span class="flex-1 text-muted">{{ block.label }}</span>
+            {% if block.source == "commitment" %}<span class="pill pill-warn">Commitment</span>{% endif %}
+            {% if block.block_id %}
+              <form method="post" action="{% url 'skip_block' block.block_id %}">
+                {% csrf_token %}
+                <input type="hidden" name="date" value="{{ selected|date:'Y-m-d' }}">
+                <button class="btn-link text-xs no-underline hover:underline" title="Not happening on this date" aria-label="Skip {{ block.label }} on this date">skip</button>
+              </form>
+            {% endif %}
+          </li>
+        {% endfor %}
+        {% for skipped in skipped_blocks %}
+          <li class="row">
+            <span class="w-32 shrink-0 text-xs tabular-nums text-muted line-through">{{ skipped.block.start_time|time:"g:i A" }}–{{ skipped.block.end_time|time:"g:i A" }}</span>
+            <span class="flex-1 text-muted line-through">{{ skipped.block.label }}</span>
+            <form method="post" action="{% url 'unskip_block' skipped.pk %}">
+              {% csrf_token %}
+              <input type="hidden" name="next" value="{% url 'calendar' %}?date={{ selected|date:'Y-m-d' }}">
+              <button class="btn-link text-xs no-underline hover:underline" aria-label="Restore {{ skipped.block.label }} on this date">restore</button>
+            </form>
           </li>
         {% endfor %}
         {% for entry in plan.planned %}

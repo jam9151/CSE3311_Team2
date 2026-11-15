@@ -1,0 +1,39 @@
+MediaFlow - Iteration 4 (final) - what is left (as of 2026-11-16)
+
+1. Review and commit the iteration-4 branch. Leave .claude/launch.json out
+   (it is only the local browser-preview config) or add it to .gitignore.
+
+2. Push and let CI run. The workflow gained a browser-test step (Playwright
+   and Chromium) that has passed locally but not yet on GitHub.
+
+3. Merge into main once CI is green, then redeploy. On megatron, in
+   /home/kirk-admin/projects/CSE3311_Team2:
+   docker/backup.sh            (a copy of the pre-migration database first)
+   git pull
+   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up --build -d
+   Migrations 0006 to 0009 run on start. docs/runbook.md has the rest.
+
+4. Turn on the things that are opt-in, if wanted:
+   - Background push: python manage.py vapid_keys, paste into .env with
+     VAPID_CLAIMS_EMAIL and COMPOSE_PROFILES=push, redeploy, allow
+     notifications on Settings in a browser, check the card says background
+     reminders are on.
+   - On-demand lookup for films, TV and games: TMDB_API_KEY and RAWG_API_KEY
+     in .env (books work without a key).
+   - Nightly backup: chmod +x docker/backup.sh and add the cron line.
+   - PostgreSQL: only if the course asks. Try it on a copy first.
+
+5. User test with classmates: hide a panel and get it back; the amber and
+   green edges in the calendar; importing their own MyMav .ics; the Move
+   button on a planned sitting; sending a Watch together invite between
+   two of them; the semester view against their real term. Put the results in section 6.5 of
+   docs/iteration4-report.md and rebuild the PDF if one is handed in.
+
+6. Decide on the four txt notes in docs/ (iteration3-*.txt and
+   iteration4-*.txt): commit them with the report or fold them into it.
+
+LEFT AS KNOWN LIMITATIONS (see the report, section 4.9)
+- Manual sittings stay within one date; only the planner crosses midnight.
+- Episode positions are arithmetic unless the unit length is set per item.
+- Calendar import skips every-other-week and monthly repeats, and says so.
+- Push on iOS needs the site added to the home screen.

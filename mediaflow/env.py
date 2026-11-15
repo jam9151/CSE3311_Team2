@@ -88,3 +88,58 @@ def env_list(name):
 def clean_smtp_password(host, password):
     """Google shows an app password in groups of four, but the code has no spaces."""
     return password.replace(" ", "") if host.lower().endswith("gmail.com") else password
+
+
+def database_from_url(url, base_dir=None):
+    """A Django DATABASES entry from a DATABASE_URL.
+
+    Two shapes are understood:
+
+        postgres://user:password@host:5432/name?sslmode=require
+        sqlite:///relative/path.sqlite3   or   sqlite:////absolute/path.sqlite3
+
+    Query parameters on a PostgreSQL URL become connection OPTIONS. Anything
+    else is an error at startup, not a silent fall back to SQLite.
+    """
+    from urllib.parse import parse_qsl, unquote, urlsplit
+
+    parts = urlsplit(url.strip())
+    scheme = parts.scheme.lower()
+
+    if scheme == "sqlite":
+        # urlsplit keeps the leading slash of the path, so three slashes give a
+        # relative path and four an absolute one, as in SQLAlchemy.
+        path = unquote(parts.path)
+        if path.startswith("//"):
+            path = path[1:]
+        else:
+            path = path.lstrip("/")
+        if not path:
+            raise ValueError("DATABASE_URL for sqlite needs a file path, like sqlite:///db.sqlite3.")
+        name = Path(path)
+        if not name.is_absolute() and base_dir is not None:
+            name = Path(base_dir) / name
+        return {"ENGINE": "django.db.backends.sqlite3", "NAME": name}
+
+    if scheme in ("postgres", "postgresql"):
+        name = unquote(parts.path.lstrip("/"))
+        if not name or not parts.hostname:
+            raise ValueError("DATABASE_URL for PostgreSQL needs a host and a database name.")
+        options = {key: value for key, value in parse_qsl(parts.query)}
+        entry = {
+            "ENGINE": "django.db.backends.postgresql",
+            "NAME": name,
+            "USER": unquote(parts.username or ""),
+            "PASSWORD": unquote(parts.password or ""),
+            "HOST": parts.hostname,
+            "PORT": str(parts.port or ""),
+            # Keep connections open between requests, and check them before
+            # reuse so a restarted database server doesn't surface as a 500.
+            "CONN_MAX_AGE": 60,
+            "CONN_HEALTH_CHECKS": True,
+        }
+        if options:
+            entry["OPTIONS"] = options
+        return entry
+
+    raise ValueError(f"DATABASE_URL must start with postgres:// or sqlite://, not {parts.scheme!r}.")

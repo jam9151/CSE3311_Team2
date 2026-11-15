@@ -42,6 +42,56 @@
   --color-viz-game: #c98500;
 }
 
+/* Light theme. The @theme block above is the dark palette and the default.
+   These override the same variables when the device prefers light and the
+   person has not picked Dark, or when they picked Light in the footer (the
+   data-theme attribute, set before the first paint by a line in base.html).
+   Every utility reads the variables, so nothing else changes. The chart
+   colours stay: they were picked for both surfaces. */
+@layer base {
+  @media (prefers-color-scheme: light) {
+    :root:not([data-theme="dark"]) {
+      --color-bg: #f5f7fb;
+      --color-surface: #ffffff;
+      --color-surface-2: #eef1f6;
+      --color-line: #d7dde8;
+      --color-ink: #111827;
+      --color-muted: #566070;
+      --color-accent: #2d6bd6;
+      --color-on-accent: #ffffff;
+      --color-good: #1d8a5c;
+      --color-warn: #9a6207;
+      --color-bad: #c23b3e;
+      --color-movie: #b3447d;
+      --color-tv: #2c69b2;
+      --color-book: #9a6207;
+      --color-game: #1d8a5c;
+      color-scheme: light;
+    }
+  }
+  :root[data-theme="light"] {
+    --color-bg: #f5f7fb;
+    --color-surface: #ffffff;
+    --color-surface-2: #eef1f6;
+    --color-line: #d7dde8;
+    --color-ink: #111827;
+    --color-muted: #566070;
+    --color-accent: #2d6bd6;
+    --color-on-accent: #ffffff;
+    --color-good: #1d8a5c;
+    --color-warn: #9a6207;
+    --color-bad: #c23b3e;
+    --color-movie: #b3447d;
+    --color-tv: #2c69b2;
+    --color-book: #9a6207;
+    --color-game: #1d8a5c;
+    color-scheme: light;
+  }
+  :root {
+    color-scheme: dark;
+  }
+}
+
 /* Django renders form fields itself ({{ form.as_p }}), so we can't put
    classes on the inputs. Style the bare elements instead. */
 @layer base {
@@ -61,9 +111,9 @@
     @apply w-full rounded-lg border border-line bg-bg px-2.5 py-2 text-sm text-ink
       focus:border-accent focus:outline-2 focus:outline-accent/20;
   }
-  /* time pickers are unreadable in dark mode otherwise */
+  /* Native pickers follow the page's colour scheme (set on :root above). */
   input, select {
-    color-scheme: dark;
+    color-scheme: inherit;
   }
   input:where([type="checkbox"]) {
     @apply size-4 shrink-0 accent-accent;
@@ -77,13 +127,24 @@
   ul.errorlist {
     @apply my-1 list-disc pl-4 text-sm text-bad;
   }
+  /* One visible focus ring for everything reached by keyboard: links, buttons,
+     the calendar cells, the hide links. Mouse clicks do not show it. */
+  :where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+    @apply rounded-sm outline-2 outline-offset-2 outline-accent;
+  }
+  /* Tap targets on phones: nothing interactive shorter than 32px. */
+  @media (max-width: 640px) {
+    .btn-sm, .btn-link {
+      @apply min-h-8;
+    }
+  }
 }
 
 /* Things used on nearly every page. Anything one-off stays as utilities in
    the template. */
 @layer components {
   .btn {
-    @apply inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-transparent
+    @apply inline-flex cursor-pointer items-center gap-1.5 whitespace-nowrap rounded-lg border border-transparent
       bg-accent px-3.5 py-2 text-sm font-semibold text-on-accent
       hover:no-underline hover:brightness-110;
   }
@@ -170,8 +231,22 @@
     @apply outline-2 outline-accent;
   }
 
+  /* Keyboard users land on it first; everyone else never sees it. */
+  .skip-link {
+    @apply sr-only focus:not-sr-only focus:fixed focus:left-3 focus:top-3 focus:z-50 focus:rounded-lg
+      focus:bg-accent focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-on-accent;
+  }
+
   .nav-link {
-    @apply rounded-lg px-3 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-ink hover:no-underline;
+    @apply whitespace-nowrap rounded-lg px-2.5 py-1.5 text-sm text-muted hover:bg-surface-2 hover:text-ink hover:no-underline sm:px-3;
+  }
+  /* The phone nav strip scrolls sideways without showing a scrollbar. */
+  .nav-strip {
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+  .nav-strip::-webkit-scrollbar {
+    display: none;
   }
   .nav-link-active {
     @apply bg-accent/15 text-accent;

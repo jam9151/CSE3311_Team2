@@ -1,0 +1,150 @@
+{% extends "base.html" %}
+{% block title %}Settings · MediaFlow{% endblock %}
+
+{% block content %}
+<header class="mb-5">
+  <p class="eyebrow">Settings</p>
+  <h1 class="text-3xl font-bold tracking-tight">Your account</h1>
+  <p class="text-muted">Everything about you in one place. The same forms also live on the pages they affect.</p>
+</header>
+
+<div class="grid items-start gap-5 lg:grid-cols-2">
+  <div class="space-y-4">
+    <section class="card" id="hours">
+      <div class="card-head"><h2>Waking hours</h2></div>
+      <form method="post">
+        {% csrf_token %}
+        {{ profile_form.as_p }}
+        <button name="save_hours" value="1" class="btn btn-secondary">Save hours</button>
+      </form>
+    </section>
+
+    <section class="card" id="goal">
+      <div class="card-head"><h2>Weekly goal</h2></div>
+      <form method="post">
+        {% csrf_token %}
+        {{ goal_form.as_p }}
+        <button name="save_goal" value="1" class="btn btn-secondary">Save goal</button>
+      </form>
+    </section>
+
+    <section class="card" id="name">
+      <div class="card-head"><h2>Shared reviews</h2></div>
+      <form method="post">
+        {% csrf_token %}
+        {{ name_form.as_p }}
+        <p class="mb-3 text-xs text-muted">Currently signed <strong>{{ public_name }}</strong>. Any one review can also be shared without a name.</p>
+        <button name="save_name" value="1" class="btn btn-secondary">Save name</button>
+      </form>
+    </section>
+
+    <section class="card" id="panels">
+      <div class="card-head"><h2>Panels on Today</h2></div>
+      <form method="post" action="{% url 'dashboard_panels' %}">
+        {% csrf_token %}
+        <input type="hidden" name="next" value="{% url 'settings' %}#panels">
+        <div class="grid gap-2 sm:grid-cols-2">
+          {% for panel in panels %}
+            <label class="mb-0 flex cursor-pointer items-start gap-2.5 rounded-lg border border-line bg-surface-2 p-3 text-sm text-ink">
+              <input type="checkbox" name="panels" value="{{ panel.key }}" class="mt-0.5" {% if panel.shown %}checked{% endif %}>
+              <span><strong class="block">{{ panel.title }}</strong><span class="text-xs text-muted">{{ panel.detail }}</span></span>
+            </label>
+          {% endfor %}
+        </div>
+        <button class="btn btn-sm btn-secondary mt-3">Save panels</button>
+      </form>
+    </section>
+  </div>
+
+  <div class="space-y-4">
+    <section class="card" id="reminders">
+      <div class="card-head"><h2>Reminders</h2></div>
+      <form method="post">
+        {% csrf_token %}
+        {{ notification_form.as_p }}
+        <button name="save_notifications" value="1" class="btn btn-secondary">Save reminders</button>
+      </form>
+      <div class="mt-3 text-sm text-muted">
+        <p data-notification-status>Checking browser support&hellip;</p>
+        <button type="button" class="btn btn-secondary mt-2" data-enable-notifications hidden>Allow browser notifications</button>
+        <p class="mt-2 text-xs" data-push-note>Reminders appear while MediaFlow is open in a browser tab.</p>
+      </div>
+
+      <div class="card-head mt-5"><h2 class="text-base">Browsers getting background reminders</h2></div>
+      {% for subscription in subscriptions %}
+        <div class="row">
+          <div class="min-w-0 flex-1">
+            <strong class="block truncate">{{ subscription.user_agent|default:"A browser"|truncatechars:60 }}</strong>
+            <p class="text-xs text-muted">
+              Added {{ subscription.created_at|date:"M j, Y" }}{% if subscription.last_sent_at %} &middot; last reminder {{ subscription.last_sent_at|date:"M j, g:i A" }}{% endif %}{% if subscription.failures %} &middot; {{ subscription.failures }} failed{% endif %}
+            </p>
+          </div>
+          <form method="post" action="{% url 'push_unsubscribe' %}">
+            {% csrf_token %}
+            <input type="hidden" name="endpoint" value="{{ subscription.endpoint }}">
+            <input type="hidden" name="next" value="{% url 'settings' %}#reminders">
+            <button class="btn btn-sm btn-ghost">Remove</button>
+          </form>
+        </div>
+      {% empty %}
+        <p class="empty">{% if push_enabled %}None yet. Allow notifications above and this browser will be added.{% else %}Background reminders are not set up on this server; reminders need an open tab.{% endif %}</p>
+      {% endfor %}
+    </section>
+
+    <section class="card" id="api">
+      <div class="card-head"><h2>API tokens</h2></div>
+      <p class="mb-3 text-sm text-muted">
+        Read-only access to your backlog, your day and your progress for a widget or a script. Send a token as
+        <code class="rounded bg-surface-2 px-1">Authorization: Bearer mf_…</code> to <code class="rounded bg-surface-2 px-1">/api/v1/me/</code>,
+        <code class="rounded bg-surface-2 px-1">/api/v1/backlog/</code>, <code class="rounded bg-surface-2 px-1">/api/v1/day/?date=</code> or
+        <code class="rounded bg-surface-2 px-1">/api/v1/progress/</code>.
+      </p>
+      {% for token in tokens %}
+        <div class="row">
+          <div>
+            <strong>{{ token.name }}</strong> <span class="text-xs text-muted">{{ token.prefix }}&hellip;</span>
+            <p class="text-xs text-muted">Made {{ token.created_at|date:"M j, Y" }}{% if token.last_used_at %} &middot; last used {{ token.last_used_at|date:"M j, g:i A" }}{% else %} &middot; never used{% endif %}</p>
+          </div>
+          <form method="post" action="{% url 'revoke_api_token' token.pk %}">
+            {% csrf_token %}<button class="btn btn-sm btn-ghost" aria-label="Revoke the token named {{ token.name }}">Revoke</button>
+          </form>
+        </div>
+      {% empty %}
+        <p class="empty mb-3">No tokens yet.</p>
+      {% endfor %}
+      <form class="mt-3 flex flex-wrap items-end gap-2" method="post" action="{% url 'create_api_token' %}">
+        {% csrf_token %}
+        <p class="mb-0 flex-1">{{ token_form.name.label_tag }}{{ token_form.name }}</p>
+        <button class="btn btn-sm btn-secondary">Make a token</button>
+      </form>
+    </section>
+
+    <section class="card" id="account">
+      <div class="card-head"><h2>Account</h2></div>
+      <div class="row">
+        <div><strong>Password</strong><p class="text-xs text-muted">Signed in as {{ user.username }}, {{ user.email }}</p></div>
+        <a class="btn btn-sm btn-secondary" href="{% url 'password_change' %}">Change password</a>
+      </div>
+      <div class="row">
+        <div><strong>Appearance</strong><p class="text-xs text-muted">Follows your device unless you pick one. The picker is in the footer of every page.</p></div>
+        <span class="flex items-center gap-1" role="group" aria-label="Appearance" data-theme-picker>
+          <button type="button" class="btn btn-sm btn-ghost" data-theme-choice="system" aria-pressed="false">System</button>
+          <button type="button" class="btn btn-sm btn-ghost" data-theme-choice="light" aria-pressed="false">Light</button>
+          <button type="button" class="btn btn-sm btn-ghost" data-theme-choice="dark" aria-pressed="false">Dark</button>
+        </span>
+      </div>
+      <div class="row">
+        <div><strong>Install as an app</strong><p class="text-xs text-muted">In the browser menu choose Install or Add to Home Screen. On iPhone, share, then Add to Home Screen.</p></div>
+      </div>
+      <div class="row">
+        <div><strong>Your data</strong><p class="text-xs text-muted">Backlog, sittings, logged time, reviews, schedule and settings as one JSON file.</p></div>
+        <a class="btn btn-sm btn-secondary" href="{% url 'export_data' %}">Download</a>
+      </div>
+      <div class="row">
+        <div><strong>Delete account</strong><p class="text-xs text-muted">Removes everything above for good. Shared reviews go too.</p></div>
+        <a class="btn btn-sm btn-danger" href="{% url 'delete_account' %}">Delete&hellip;</a>
+      </div>
+    </section>
+  </div>
+</div>
+{% endblock %}

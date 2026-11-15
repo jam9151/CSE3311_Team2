@@ -8,6 +8,7 @@
     <h1 class="text-3xl font-bold tracking-tight">Everything you mean to get to</h1>
   </div>
   <div class="flex gap-2">
+    <a class="btn btn-ghost" href="{% url 'import_backlog' %}" title="From a Letterboxd or Goodreads export">Import</a>
     <a class="btn btn-secondary" href="{% url 'discover' %}">Browse catalog</a>
     <a class="btn" href="{% url 'backlog_add' %}">Add item</a>
   </div>
@@ -42,7 +43,7 @@
         {% endif %}
       </div>
 
-      <div class="flex items-center gap-2">
+      <div class="flex flex-wrap items-center gap-2">
         <form method="post" action="{% url 'backlog_priority' item.pk %}">
           {% csrf_token %}
           <input type="hidden" name="next" value="{{ request.get_full_path }}">
@@ -52,14 +53,19 @@
               <option value="{{ value }}" {% if item.priority == value %}selected{% endif %}>{{ label }}</option>
             {% endfor %}
           </select>
+          {# Keyboard and no-script users get a real button; it only appears when focused. #}
+          <button class="btn btn-sm btn-ghost sr-only focus:not-sr-only">Set</button>
         </form>
+        {% if item.status != "completed" %}
+          <a class="btn btn-sm btn-ghost" href="{% url 'log_time' item.pk %}?next={{ request.get_full_path|urlencode }}">Log time</a>
+        {% endif %}
         <a class="btn btn-sm btn-ghost" href="{% url 'backlog_edit' item.pk %}">Edit</a>
         {% if item.status == "completed" %}
           <a class="btn btn-sm btn-ghost" href="{% url 'write_review' item.pk %}">Review</a>
         {% endif %}
         <form method="post" action="{% url 'backlog_delete' item.pk %}">
           {% csrf_token %}
-          <button class="btn btn-sm btn-danger">Remove</button>
+          <button class="btn btn-sm btn-danger" aria-label="Remove {{ item.title }} from your backlog">Remove</button>
         </form>
       </div>
     </div>

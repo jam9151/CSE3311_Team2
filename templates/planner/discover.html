@@ -56,6 +56,23 @@
   {% endfor %}
 </div>
 
+{% if lookup_query %}
+  <form class="mt-5 flex flex-wrap items-center gap-3 rounded-lg border border-dashed border-line p-3.5 text-sm" method="post" action="{% url 'lookup_catalog' %}" data-lookup>
+    {% csrf_token %}
+    <input type="hidden" name="q" value="{{ lookup_query }}">
+    <input type="hidden" name="media_type" value="{{ form.media_type.value|default:'' }}">
+    <span class="text-muted">
+      Not in the catalog?
+      {% if lookup_sources %}
+        Look up <strong>{{ lookup_query }}</strong> on {{ lookup_sources|join:", " }} and add what comes back. Takes a few seconds.
+      {% else %}
+        No catalog sources are set up on this server, so there is nothing to look it up on. <a href="{% url 'backlog_add' %}">Add it by hand</a>.
+      {% endif %}
+    </span>
+    {% if lookup_sources %}<button class="btn btn-sm btn-secondary">Look it up</button>{% endif %}
+  </form>
+{% endif %}
+
 {% if page.paginator.num_pages > 1 %}
   <nav class="mt-6 flex items-center justify-center gap-3 text-sm" aria-label="Pages of results">
     {% if page.has_previous %}

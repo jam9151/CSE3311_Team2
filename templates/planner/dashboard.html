@@ -30,7 +30,8 @@
   </div>
 {% endfor %}
 
-<div class="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+{% if "numbers" not in hidden %}
+<div class="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4" data-panel="numbers">
   <div class="card">
     <div class="text-2xl font-bold tracking-tight">{{ free_label }}</div>
     <div class="text-xs uppercase tracking-wider text-muted">Free today</div>
@@ -48,13 +49,34 @@
     <div class="text-xs uppercase tracking-wider text-muted">Planned today</div>
   </div>
 </div>
+{% endif %}
+
+{% if goal and "numbers" not in hidden %}
+  <div class="mb-5 rounded-lg border border-line bg-surface px-3.5 py-2.5 text-sm" data-goal>
+    <div class="flex items-center justify-between gap-3">
+      <span><strong>This week:</strong> {{ goal.week_time }} of {{ goal.goal_time }}{% if goal.met %} &middot; <span class="text-good">goal met</span>{% endif %}</span>
+      <a class="text-xs" href="{% url 'stats' %}">Progress</a>
+    </div>
+    <div class="mt-1.5 h-1.5 overflow-hidden rounded-full bg-surface-2" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="{{ goal.percent }}">
+      <div class="h-full {% if goal.met %}bg-good{% else %}bg-accent{% endif %}" style="width: {{ goal.percent }}%"></div>
+    </div>
+  </div>
+{% endif %}
+
+{% if hidden_count == panels|length %}
+  <p class="empty mb-5">Every panel is hidden. <a href="#customize">Choose what to show</a> below.</p>
+{% endif %}
 
 <div class="grid items-start gap-5 lg:grid-cols-[3fr_2fr]">
   <div class="space-y-4">
-    <section class="card">
+    {% if "suggestions" not in hidden %}
+    <section class="card" data-panel="suggestions">
       <div class="card-head">
         <h2>Suggestions for today</h2>
-        <a class="text-sm" href="{% url 'calendar' %}">Open calendar</a>
+        <span class="flex items-center gap-3">
+          <a class="text-sm" href="{% url 'calendar' %}">Open calendar</a>
+          {% include "planner/_hide_panel.html" with key="suggestions" %}
+        </span>
       </div>
       {% for suggestion in plan.pending %}
         {% include "planner/_suggestion.html" with suggestion=suggestion next_url="/dashboard/" %}
@@ -62,22 +84,97 @@
         <p class="empty">No open suggestions. Hit <strong>Suggest something</strong> and we'll look at the gaps in your day.</p>
       {% endfor %}
     </section>
+    {% endif %}
 
-    <section class="card">
-      <div class="card-head"><h2>Planned today</h2></div>
+    {% if "followup" not in hidden and followup %}
+    <section class="card border-warn/40" data-panel="followup">
+      <div class="card-head">
+        <h2>Did these happen?</h2>
+        {% include "planner/_hide_panel.html" with key="followup" %}
+      </div>
+      <p class="mb-3 text-sm text-muted">Planned, time passed, never marked. Mark done to log the time, or remove it.</p>
+      {% for suggestion in followup %}
+        <article class="mb-3 rounded-lg border border-l-[3px] border-line border-l-warn bg-surface-2 px-4 py-3 last:mb-0">
+          <span class="text-sm font-semibold tabular-nums text-warn">{{ suggestion.date|date:"D, M j" }} &middot; {{ suggestion.start_time|time:"g:i A" }}</span>
+          <h3 class="mt-0.5 font-semibold">{{ suggestion.backlog_item.title }}</h3>
+          <p class="mb-2 text-xs text-muted">{{ suggestion.minutes }} min planned</p>
+          <div class="flex flex-wrap gap-2">
+            <form method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'done' %}">
+              {% csrf_token %}<input type="hidden" name="next" value="{% url 'dashboard' %}">
+              <button class="btn btn-sm btn-secondary">Yes, mark done</button>
+            </form>
+            <form method="post" action="{% url 'respond_to_suggestion' suggestion.pk 'cancel' %}">
+              {% csrf_token %}<input type="hidden" name="next" value="{% url 'dashboard' %}">
+              <button class="btn btn-sm btn-ghost">Didn't happen</button>
+            </form>
+          </div>
+        </article>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if "invites" not in hidden and invites_in or "invites" not in hidden and invites_out %}
+    <section class="card" data-panel="invites">
+      <div class="card-head">
+        <h2>Watch together</h2>
+        {% include "planner/_hide_panel.html" with key="invites" %}
+      </div>
+      {% for invite in invites_in %}
+        <article class="mb-3 rounded-lg border border-l-[3px] border-line border-l-accent bg-surface-2 px-4 py-3 last:mb-0">
+          <span class="text-sm font-semibold tabular-nums text-accent">{{ invite.date|date:"D, M j" }} &middot; {{ invite.start_time|time:"g:i A" }} – {{ invite.end_time|time:"g:i A" }}</span>
+          <h3 class="mt-0.5 font-semibold">{{ invite.title }}</h3>
+          <p class="mb-2 text-xs text-muted"><strong>{{ invite.host.username }}</strong> wants to watch this with you{% if invite.message %}: &ldquo;{{ invite.message }}&rdquo;{% endif %}</p>
+          <div class="flex flex-wrap gap-2">
+            <form method="post" action="{% url 'respond_to_invite' invite.pk 'accept' %}">
+              {% csrf_token %}<input type="hidden" name="next" value="{% url 'dashboard' %}">
+              <button class="btn btn-sm">Accept</button>
+            </form>
+            <form method="post" action="{% url 'respond_to_invite' invite.pk 'decline' %}">
+              {% csrf_token %}<input type="hidden" name="next" value="{% url 'dashboard' %}">
+              <button class="btn btn-sm btn-ghost">Decline</button>
+            </form>
+          </div>
+        </article>
+      {% endfor %}
+      {% for invite in invites_out %}
+        <div class="row">
+          <div>
+            <strong>{{ invite.title }}</strong> with {{ invite.guest.username }}
+            <p class="text-xs text-muted">{{ invite.date|date:"D, M j" }} at {{ invite.start_time|time:"g:i A" }} &middot; waiting for them</p>
+          </div>
+          <form method="post" action="{% url 'respond_to_invite' invite.pk 'cancel' %}">
+            {% csrf_token %}<input type="hidden" name="next" value="{% url 'dashboard' %}">
+            <button class="btn btn-sm btn-ghost">Withdraw</button>
+          </form>
+        </div>
+      {% endfor %}
+    </section>
+    {% endif %}
+
+    {% if "planned" not in hidden %}
+    <section class="card" data-panel="planned">
+      <div class="card-head">
+        <h2>Planned today</h2>
+        {% include "planner/_hide_panel.html" with key="planned" %}
+      </div>
       {% for suggestion in plan.planned %}
         {% include "planner/_suggestion.html" with suggestion=suggestion next_url="/dashboard/" %}
       {% empty %}
-        <p class="empty">Nothing on the calendar for today yet.</p>
+        <p class="empty">Nothing on the calendar for today yet. <a href="{% url 'plan_session' %}?date={{ plan.date|date:'Y-m-d' }}">Plan something yourself</a>.</p>
       {% endfor %}
     </section>
+    {% endif %}
   </div>
 
   <div class="space-y-4">
-    <section class="card">
+    {% if "day" not in hidden %}
+    <section class="card" data-panel="day">
       <div class="card-head">
         <h2>Your day</h2>
-        <a class="text-sm" href="{% url 'weekly_schedule' %}">Edit</a>
+        <span class="flex items-center gap-3">
+          <a class="text-sm" href="{% url 'weekly_schedule' %}">Edit</a>
+          {% include "planner/_hide_panel.html" with key="day" %}
+        </span>
       </div>
       <ul class="text-sm">
         {% for block in plan.busy %}
@@ -96,11 +193,16 @@
         {% endfor %}
       </ul>
     </section>
+    {% endif %}
 
-    <section class="card">
+    {% if "backlog" not in hidden %}
+    <section class="card" data-panel="backlog">
       <div class="card-head">
         <h2>Backlog</h2>
-        <a class="text-sm" href="{% url 'backlog' %}">See all</a>
+        <span class="flex items-center gap-3">
+          <a class="text-sm" href="{% url 'backlog' %}">See all</a>
+          {% include "planner/_hide_panel.html" with key="backlog" %}
+        </span>
       </div>
       {% for item in backlog %}
         <div class="row">
@@ -121,10 +223,14 @@
         <p class="empty">Nothing here yet. <a href="{% url 'discover' %}">Find something to add</a>.</p>
       {% endfor %}
     </section>
+    {% endif %}
 
-    {% if upcoming %}
-      <section class="card">
-        <div class="card-head"><h2>Coming up</h2></div>
+    {% if "upcoming" not in hidden and upcoming %}
+      <section class="card" data-panel="upcoming">
+        <div class="card-head">
+          <h2>Coming up</h2>
+          {% include "planner/_hide_panel.html" with key="upcoming" %}
+        </div>
         {% for suggestion in upcoming %}
           <div class="row">
             <div>
@@ -137,4 +243,27 @@
     {% endif %}
   </div>
 </div>
+
+{# Which panels this page shows. Each panel's own Hide button posts here too. #}
+<details id="customize" class="mt-8 rounded-xl border border-dashed border-line p-4" {% if hidden_count %}open{% endif %}>
+  <summary class="cursor-pointer text-sm font-semibold text-muted">
+    Customize this page{% if hidden_count %} &middot; {{ hidden_count }} panel{{ hidden_count|pluralize }} hidden{% endif %}
+  </summary>
+  <form class="mt-3" method="post" action="{% url 'dashboard_panels' %}">
+    {% csrf_token %}
+    <p class="mb-3 text-sm text-muted">Tick what you want on Today. Hidden panels come back whenever you want them.</p>
+    <div class="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+      {% for panel in panels %}
+        <label class="mb-0 flex cursor-pointer items-start gap-2.5 rounded-lg border border-line bg-surface-2 p-3 text-sm text-ink">
+          <input type="checkbox" name="panels" value="{{ panel.key }}" class="mt-0.5" {% if panel.shown %}checked{% endif %}>
+          <span>
+            <strong class="block">{{ panel.title }}</strong>
+            <span class="text-xs text-muted">{{ panel.detail }}</span>
+          </span>
+        </label>
+      {% endfor %}
+    </div>
+    <button class="btn btn-sm btn-secondary mt-3">Save</button>
+  </form>
+</details>
 {% endblock %}

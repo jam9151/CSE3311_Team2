@@ -129,19 +129,28 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         created = 0
         for title, media_type, genre, creator, release, minutes, rating, description in CATALOG:
-            _, was_created = CatalogItem.objects.update_or_create(
-                title=title,
-                media_type=media_type,
-                defaults={
-                    "genre": genre,
-                    "creator": creator,
-                    "release_date": release,
-                    "typical_minutes": minutes,
-                    "rating": rating,
-                    "description": description,
-                },
+            values = {
+                "genre": genre,
+                "creator": creator,
+                "release_date": release,
+                "typical_minutes": minutes,
+                "rating": rating,
+                "description": description,
+            }
+            # A title can be in the catalog twice once imports have run (the
+            # curated row and an imported one), so pick the curated row if
+            # there is one rather than letting update_or_create choke on two.
+            existing = (
+                CatalogItem.objects.filter(title=title, media_type=media_type).order_by("source", "pk").first()
             )
-            created += int(was_created)
+            if existing:
+                if not existing.locked:
+                    for field, value in values.items():
+                        setattr(existing, field, value)
+                    existing.save()
+            else:
+                CatalogItem.objects.create(title=title, media_type=media_type, **values)
+                created += 1
 
         self.stdout.write(
             self.style.SUCCESS(f"Catalog ready: {CatalogItem.objects.count()} items ({created} new).")

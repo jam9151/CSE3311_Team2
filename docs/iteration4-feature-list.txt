@@ -1,0 +1,70 @@
+MediaFlow - Iteration 4 - every feature added (branch iteration-4)
+
+TODAY PAGE
+- Hide any panel, bring it back from a customize box at the bottom
+- "Did these happen?" panel for planned sittings that were never marked done
+- Weekly goal bar
+- Watch together invites panel
+
+CALENDAR
+- Commitments shown in the day cells next to planned sittings, with busy hours per day
+- Click a day to plan a sitting at a chosen time
+- Click a day to add a commitment, returns to that day after
+- Skip a single class or shift on one date, or mark a whole day off
+- Restore a skipped block
+- Semester view: busy hours per week for the term, busiest and lightest weeks
+
+SITTINGS AND THE PLANNER
+- Move a planned sitting to another day, time or length
+- Remove a planned sitting
+- "Later" on a suggestion: back tomorrow, no penalty
+- Long free gaps split into several sittings with breaks between
+- Films can run past midnight on overnight schedules
+- Other students' ratings nudge the score
+- Time-of-day preference learned from what you accept and reject
+- Suggestions say which episodes or chapters they cover
+
+BACKLOG AND CATALOG
+- Episode/chapter tracking: "Episode 5 of 24 next", per-item episode length, enter episodes finished on the edit form
+- Log time by hand on a date, counted on Progress
+- Import a Letterboxd or Goodreads export
+- Look up a missing title on TMDB, Open Library and RAWG from the search page
+- Catalog edits made in admin survive the next import
+- Series: "next in the series" on the catalog page and on Reviews after finishing one, filled from TMDB collections
+- Seed command no longer crashes on duplicate titles
+
+SCHEDULE
+- Import an .ics calendar: weekly repeats become blocks, one-offs become commitments
+- Weekly goal setting
+
+REVIEWS
+- Display name on shared reviews
+- Share a review anonymously
+
+SOCIAL
+- Watch together: invite a classmate to a title, planner finds a time free for both, accepting puts it on both calendars
+
+REMINDERS
+- Background push notifications with VAPID keys and a sender process
+
+ACCOUNT
+- Settings page with everything in one place
+- Export all your data as JSON
+- Delete your account
+- API tokens, read-only JSON API for backlog, day, progress
+- Install as an app (web manifest, icons)
+- Light and dark theme with a picker
+
+MOBILE AND ACCESSIBILITY
+- Phone layout pass on every page, compact two-row nav
+- Skip link, focus ring, aria labels on buttons, column headers, screen-reader text on calendar cells
+- Real buttons behind auto-submitting dropdowns
+
+INFRASTRUCTURE
+- PostgreSQL option via DATABASE_URL and a compose overlay
+- Backup script and a runbook
+- Playwright browser tests in CI
+- Four migrations (0006 to 0009)
+
+NUMBERS
+- 403 tests at the start, 646 unit tests plus 5 browser tests now

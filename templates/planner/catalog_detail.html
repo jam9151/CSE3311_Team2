@@ -36,6 +36,16 @@
           <span>{{ community.average }}/5</span>
         </div>
       {% endif %}
+      {% if item.series %}
+        <div class="row">
+          <div><strong>Series</strong><p class="text-xs text-muted">{{ item.series }}{% if item.series_order %}, number {{ item.series_order }}{% endif %}</p></div>
+          <span class="text-sm text-muted">{{ series_count }} in the catalog</span>
+        </div>
+      {% endif %}
+      <div class="row">
+        <div><strong>Watch together</strong><p class="text-xs text-muted">Find a time free for you and a classmate</p></div>
+        <a class="btn btn-sm btn-secondary" href="{% url 'watch_together' item.pk %}">Invite someone</a>
+      </div>
       <div class="row">
         <div><strong>Fits today?</strong><p class="text-xs text-muted">Against your longest free gap</p></div>
         {% if fits_today is None %}
@@ -87,6 +97,22 @@
     {% endif %}
 
     <section>
+      {% if next_in_series %}
+        <div class="card-head"><h2>Next in the series</h2></div>
+        <div class="mb-5 grid gap-3 sm:grid-cols-2" data-series>
+          {% for other in next_in_series %}
+            <div class="rounded-lg border border-line bg-surface-2 p-3 text-sm">
+              <h3 class="font-semibold"><a href="{{ other.get_absolute_url }}">{{ other.title }}</a></h3>
+              <p class="text-xs text-muted">{% if other.series_order %}Number {{ other.series_order }}{% elif other.release_year %}{{ other.release_year }}{% endif %} &middot; {{ other.typical_minutes }} min</p>
+              <form class="mt-2" method="post" action="{% url 'add_from_catalog' other.pk %}">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{{ request.path }}">
+                <button class="btn btn-sm btn-secondary">Add to backlog</button>
+              </form>
+            </div>
+          {% endfor %}
+        </div>
+      {% endif %}
       <div class="card-head">
         <h2>What other students thought</h2>
         {% if community.count %}

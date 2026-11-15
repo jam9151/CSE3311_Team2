@@ -69,7 +69,7 @@ API beyond one JSON endpoint used for reminder polling.
 | --- | --- | --- |
 | Language | Python 3.12 | The Docker image uses `python:3.12-slim`; CI uses 3.12. |
 | Web framework | Django 5.2 (`>=5.2,<6.0`) | Server-rendered templates, built-in auth, ORM, admin. |
-| Database | SQLite | One file, `db.sqlite3` by default, path set by `DATABASE_PATH`. No other database backend is configured. |
+| Database | SQLite, or PostgreSQL | One file, `db.sqlite3` by default, path set by `DATABASE_PATH`. `DATABASE_URL` (`postgres://…` or `sqlite:///…`) switches backend and wins over the path; `mediaflow.env.database_from_url` parses it. The driver is `psycopg[binary]`. |
 | Static files in production | WhiteNoise 6.x | Only active when `DEBUG` is off. Serves hashed, compressed files. |
 | Production WSGI server | Gunicorn 22+ | Installed only on non-Windows platforms (`sys_platform != "win32"` marker in `requirements.txt`). |
 | CSS | Tailwind CSS 4 via `@tailwindcss/cli` | Built file is committed. Node is needed only to change styles. |
@@ -479,6 +479,19 @@ and by `RegisterForm.save`.
 | `verification_sent_at` | DateTime, nullable | | Resend cooldown anchor. |
 | `notify_enabled` | Boolean | `False` | Opt-in for reminders. |
 | `notify_lead_minutes` | PositiveSmallInteger, 1–120 | `15` | How far ahead to remind. |
+| `walkthrough_dismissed` | Boolean | `False` | The user hid the getting-started checklist. |
+| `hidden_panels` | Char(200), blank | `""` | Comma-separated `DASHBOARD_PANELS` keys the user took off Today. `hidden_panel_keys` parses it (unknown keys dropped), `set_hidden_panels` writes it in page order. |
+| `display_name` | Char(40), blank | `""` | Signed on shared reviews. `public_name` falls back to the username. |
+| `weekly_goal_minutes` | PositiveInteger | `0` | Minutes to log Monday to Sunday. Zero is no goal. |
+
+`day_start` and `day_end` default to real `time` objects, not `"08:00"`
+strings: a profile made by `get_or_create` is used before any reload, and
+the free-time maths reads `.hour` and `.minute` off it.
+
+`DASHBOARD_PANELS` (in `models.py`) lists the eight panels on Today in page
+order with a title and a one-line description: `numbers`, `suggestions`,
+`planned`, `followup`, `invites`, `day`, `backlog`, `upcoming`. The heading
+and the Suggest something button are not panels and always show.
 
 ### 6.4 CatalogItem
 
@@ -497,6 +510,8 @@ rows into their backlog.
 | `rating` | Decimal(3,1), 0–10, nullable | Aggregate score out of 10. |
 | `typical_minutes` | PositiveInteger | The only number the scheduler needs. |
 | `source` | Char(20), blank | `openlibrary`, `tmdb`, `rawg`, or empty for hand-entered rows. |
+| `locked` | Boolean | "Keep my edits". Set when an imported row is edited in the admin; `save_record` then returns `kept` and leaves it alone. |
+| `series`, `series_order` | Char(160) blank, PositiveSmallInteger nullable | The series or collection and the position in it. Films get it from TMDB's `belongs_to_collection` (minus the word "Collection"); anything else by hand in the admin. `services.next_in_series` orders by `series_order`, else release date, and leaves out what comes before. |
 | `source_id` | Char(60), blank | The source's identifier, e.g. `movie-27205`, `tv-1396`, `OL123W`, `3498`. |
 
 Constraints and ordering: ordered by `title`. A conditional
@@ -518,6 +533,8 @@ A user's personal copy of something they intend to get to.
 | `media_type` | MediaType | |
 | `priority` | PositiveSmallInteger 1–5 | Default 3. Labels: 5 "Must play next", 4 "High", 3 "Normal", 2 "Low", 1 "Someday". |
 | `estimated_minutes` | PositiveInteger | Total time to finish. |
+| `unit_minutes` | PositiveSmallInteger, nullable, 5–600 | One episode, chapter or session for this title when it differs from the type's default. `rules` substitutes it for `chunk_minutes`. |
+| `snoozed_until` | Date, nullable | "Later": not a candidate before this date, with no penalty. Set to the day after the suggestion that was snoozed. |
 | `minutes_completed` | PositiveInteger | Default 0. Advanced by marking sessions done. |
 | `status` | `backlog` / `in_progress` / `completed` / `paused` | Default `backlog`. |
 | `notes` | Text, blank | |
@@ -551,6 +568,14 @@ Something that happens every week on one weekday.
 | `start_time`, `end_time` | TimeField | Form validation requires end after start. |
 
 Ordering: `weekday, start_time`.
+
+### 6.6a BlockException
+
+A `RecurringBlock` that does not happen on one `date`: no class this
+Thursday, a day off. Unique per block and date. `busy_blocks` leaves the
+block out on that date, so the time is free to the planner. Created from
+the calendar day panel (one block, or every block that day) and listed on
+My week until the date passes.
 
 ### 6.7 Commitment
 
@@ -606,11 +631,72 @@ asks for suggestions again. `accepted`, `rejected` and `done` rows are kept.
 | `user` | FK → User, `related_name="reviews"` |
 | `backlog_item` | OneToOne → BacklogItem, `CASCADE`, `related_name="review"` |
 | `rating` | PositiveSmallInteger 1–5 |
+| `headline` | Char(120), blank |
 | `body` | Text, blank |
-| `created_at` | DateTime, auto |
+| `recommend` | Boolean, nullable: the "worth the time?" verdict |
+| `contains_spoilers` | Boolean |
+| `shared` | Boolean, default `True`: visible to other students on the catalog page |
+| `anonymous` | Boolean, default `False`: shared, but signed "A student" |
+| `created_at`, `updated_at` | DateTime, auto |
 
 Ordering: `-created_at`. `star_range` returns `range(rating)` for the
-template to loop over.
+template to loop over. `reviewer_name` is what other students see as the
+author: `Review.ANONYMOUS_NAME` ("A student") when `anonymous`, otherwise
+the profile's `public_name` (display name or username).
+
+`BacklogItem` also derives an episode or chapter position with no extra
+storage: `units_total` is the estimate divided by the unit length,
+`units_done` the minutes done divided the same way, `next_unit` and
+`progress_label` ("Episode 5 of 24 next") follow, and `units_label(minutes)`
+says what a sitting covers ("episodes 5–7"). Films have none of this.
+
+### 6.9c WatchInvite and ApiToken
+
+`WatchInvite` is one host, one guest, one title kept by name (plus the
+catalog row while it exists), and a date, start, end and length the planner
+found free for both. Status runs pending, accepted, declined or cancelled.
+`services.accept_invite` creates an accepted `Suggestion` for each of them,
+making a backlog entry for whoever lacks one, with the reason "Watching
+together with …".
+
+`ApiToken` is a bearer token for the read-only API: a name, the first eight
+characters for display, the SHA-256 of the token (never the token itself),
+and when it was made and last used. `services.make_api_token` returns the
+raw token once; `user_for_api_token` looks a token up and stamps
+`last_used_at`.
+
+### 6.9b PushSubscription and SentReminder
+
+`PushSubscription` is one browser that asked for background reminders: the
+`endpoint` at the push service (unique), the `p256dh` and `auth` keys that
+encrypt payloads to that browser, the user agent, and `last_sent_at` and
+`failures` for the admin. `subscription_info()` returns the dict pywebpush
+wants. A user can have several, one per browser; an endpoint re-posted by a
+different signed-in user moves to them.
+
+`SentReminder` is one row per `(user, key)` the sender has pushed, where the
+key is the same stable reminder key the open-tab poller uses, so a reminder
+is pushed once rather than once a minute for the whole lead window. Rows
+older than two days are pruned on every run.
+
+### 6.9a TimeLog
+
+Minutes spent on a backlog item outside a planned sitting, on a date.
+Marking a suggestion done logs time through the `Suggestion` row; this is
+the other route ("read for forty minutes on the bus on Tuesday").
+
+| Field | Type |
+| --- | --- |
+| `user` | FK → User, `related_name="time_logs"` |
+| `backlog_item` | FK → BacklogItem, `CASCADE`, `related_name="time_logs"` |
+| `date` | Date |
+| `minutes` | PositiveInteger, 1–1440 |
+| `note` | Char(120), blank |
+| `created_at` | DateTime, auto |
+
+Ordering: `-date, -created_at`. The `log_time` view also adds the minutes to
+`BacklogItem.minutes_completed` and moves the item to in progress, or to
+completed when nothing is left.
 
 ### 6.10 Migrations
 
@@ -620,6 +706,11 @@ template to loop over.
 | `0002_profile_notifications` | `notify_enabled`, `notify_lead_minutes`. |
 | `0003_email_verification` | `email_verified`, `verification_sent_at`, plus a data migration that marks every existing profile verified so nobody who predated the feature was locked out. |
 | `0004_catalog_source` | `source`, `source_id`, and the per-source uniqueness constraint. |
+| `0005_iteration3_reviews_walkthrough` | `walkthrough_dismissed`; `headline`, `recommend`, `contains_spoilers`, `shared`, `updated_at` on Review; the "P4 · High" priority choices. |
+| `0006_iteration4_panels_timelog_display_name` | `hidden_panels` and `display_name` on Profile, `anonymous` on Review, the `TimeLog` model, and `time` defaults for the waking hours. |
+| `0007_iteration4_push_catalog_lock` | `locked` on CatalogItem, and the `PushSubscription` and `SentReminder` models. |
+| `0008_iteration4_units_goals_exceptions` | `unit_minutes` on BacklogItem, `weekly_goal_minutes` on Profile, and the `BlockException` model. |
+| `0009_iteration4_snooze_series_invites_tokens` | `snoozed_until` on BacklogItem, `series` and `series_order` on CatalogItem, and the `WatchInvite` and `ApiToken` models. |
 
 CI runs `makemigrations --check --dry-run`, so a model change without a
 migration fails the build.
@@ -742,36 +833,63 @@ requires login and is held behind email verification.
 | GET | `/verify/` | `verify_pending` | "Check your email" holding page. |
 | POST | `/verify/resend/` | `resend_verification` | Rate-limited resend. |
 | GET | `/verify/<token>/` | `verify_email` | The emailed link. Public. |
-| GET | `/dashboard/` | `dashboard` | "Today" page. |
-| GET | `/discover/` | `discover` | Catalog search with filters and paging. |
-| GET | `/media/<slug>/` | `catalog_detail` | One catalog item. |
+| GET | `/dashboard/` | `dashboard` | "Today" page, minus any panels the user hid. |
+| POST | `/dashboard/walkthrough/hide/` | `dismiss_walkthrough` | Hide the getting-started checklist. |
+| POST | `/dashboard/panels/` | `dashboard_panels` | `hide=<key>` or `show=<key>` for one panel, or the full set of `panels` ticked in the customizer (anything unticked is hidden). |
+| GET | `/discover/` | `discover` | Catalog search with filters and paging. With a search term, offers to look it up on the live sources. |
+| POST | `/discover/lookup/` | `lookup_catalog` | Asks every source that has a key for the term right now, saves what comes back, returns to the search. |
+| GET | `/media/<slug>/` | `catalog_detail` | One catalog item, with what comes next in its series and a Watch together link. |
+| GET/POST | `/media/<pk>/watch-together/` | `watch_together` | Name a classmate (step one lists times free for both), pick a slot (step two sends the invite). |
+| POST | `/invites/<pk>/<action>/` | `respond_to_invite` | `accept` or `decline` by the guest, `cancel` by the host; anything else 404. |
 | POST | `/media/<pk>/add/` | `add_from_catalog` | Copy a catalog row into the backlog. |
 | GET | `/backlog/` | `backlog` | List, optionally filtered by `?status=`. |
 | GET/POST | `/backlog/new/` | `backlog_edit` (pk=None) | Add a hand-typed item. |
+| GET/POST | `/backlog/import/` | `import_backlog` | A Letterboxd or Goodreads CSV onto the backlog. |
 | GET/POST | `/backlog/<pk>/edit/` | `backlog_edit` | Edit. |
 | POST | `/backlog/<pk>/priority/` | `backlog_priority` | Inline priority dropdown. Clamps to 1–5. |
 | POST | `/backlog/<pk>/delete/` | `backlog_delete` | |
-| GET/POST | `/schedule/` | `weekly_schedule` | "My week": three forms on one page, the seven-day view, Plan my week. |
+| GET/POST | `/backlog/<pk>/log/` | `log_time` | Log minutes on a date (a `TimeLog`). Honours `next`. |
+| GET/POST | `/schedule/` | `weekly_schedule` | "My week": four forms on one page (hours, goal, reminders, add block), the seven-day view, Plan my week, coming exceptions. |
+| GET/POST | `/schedule/import/` | `import_schedule` | An .ics calendar onto My week. |
+| POST | `/schedule/block/<pk>/skip/` | `skip_block` | Skip one block on `date`. Refused for a date on another weekday. |
+| POST | `/schedule/skip/<pk>/delete/` | `unskip_block` | Restore a skipped block. |
+| POST | `/schedule/day-off/` | `day_off` | Skip every block on `date`. |
 | POST | `/schedule/block/<pk>/delete/` | `delete_block` | |
 | GET/POST | `/schedule/block/<pk>/edit/` | `edit_block` | |
-| GET/POST | `/schedule/commitment/new/` | `add_commitment` | |
-| GET/POST | `/schedule/commitment/<pk>/edit/` | `edit_commitment` | |
+| GET/POST | `/schedule/commitment/new/` | `add_commitment` | `?date=` (from the calendar) starts the form in that day's first free gap, or 09:00. Honours `next`. |
+| GET/POST | `/schedule/commitment/<pk>/edit/` | `edit_commitment` | Honours `next`. |
 | POST | `/schedule/commitment/<pk>/delete/` | `delete_commitment` | |
 | GET | `/notifications/upcoming/` | `reminders_json` | JSON for the reminder poller. Exempt from verification. |
+| GET | `/sw.js` | `service_worker` | The service worker, served from the root so its scope is the whole site, with `Service-Worker-Allowed: /`. Public. |
+| GET | `/notifications/push/key/` | `push_key` | Whether push is on and the public VAPID key. Exempt from verification. |
+| POST | `/notifications/push/subscribe/` | `push_subscribe` | JSON body from `PushManager.subscribe`. Upserts a `PushSubscription`; 409 when push is off, 400 for anything that is not a subscription. |
+| POST | `/notifications/push/unsubscribe/` | `push_unsubscribe` | Removes one endpoint of the signed-in user. |
 | GET | `/calendar/` | `calendar` | Month grid plus day panel. `?year=&month=&date=`. |
+| GET | `/semester/` | `semester` | Busy hours per week for the term, `?weeks=` 4 to 26. |
+| GET/POST | `/calendar/plan/` | `plan_session` | Put a backlog item on `?date=` yourself: saves an accepted `Suggestion`. With `?move=<pk>` edits an accepted sitting instead (day, time, length), its own slot not counted as busy. Refuses overlaps with busy time and manual sittings past midnight. |
 | POST | `/suggestions/refresh/` | `refresh_suggestions` | Regenerate pending suggestions for one day (`date` field, defaults to today). |
 | POST | `/suggestions/plan-week/` | `plan_week` | Regenerate pending suggestions for the next seven days. |
 | POST | `/suggestions/accept-week/` | `accept_week` | Accept every pending suggestion in the next seven days. |
-| POST | `/suggestions/<pk>/<action>/` | `respond_to_suggestion` | `action` is `accept`, `reject` or `done`; anything else is 404. |
+| POST | `/suggestions/<pk>/<action>/` | `respond_to_suggestion` | `action` is `accept`, `reject`, `later` (a pending one dropped and the title snoozed until tomorrow, no penalty), `done` or `cancel` (an accepted sitting off the calendar, deleted); anything else is 404. |
 | GET | `/progress/` | `stats` | Progress page. |
 | GET | `/reviews/` | `reviews` | Reviews list plus "finished, not reviewed". |
 | GET/POST | `/reviews/<pk>/write/` | `write_review` | Create or edit the review for a backlog item. |
+| POST | `/reviews/name/` | `set_display_name` | The name signed on shared reviews; blank reverts to the username. |
+| GET/POST | `/settings/` | `settings_page` | Every account setting on one page, four forms told apart by submit name, panels and subscribed browsers. |
+| GET | `/settings/export/` | `export_data` | Everything the user put in, as a JSON download. |
+| GET/POST | `/settings/delete/` | `delete_account` | Password again plus a checkbox, then the user and everything cascading is deleted. |
+| POST | `/settings/tokens/new/`, `/settings/tokens/<pk>/revoke/` | API tokens | Make a token (shown once in the flash message) or revoke one. |
+| GET | `/api/v1/me/`, `/api/v1/backlog/`, `/api/v1/day/`, `/api/v1/progress/` | `api_*` | Read-only JSON. `Authorization: Bearer mf_…` only; a session does not count. 401 with `WWW-Authenticate` otherwise. No CSRF, no cookies. |
 | * | `/accounts/login/`, `/accounts/logout/`, … | Django auth | Stock views. |
 | * | `/admin/` | Django admin | Staff only. |
 
 Ownership is enforced in every per-object view with
 `get_object_or_404(Model, pk=pk, user=request.user)`, so a user editing the
 URL to someone else's id gets a 404 rather than a permission error.
+
+Views that take a `next` parameter run it through `_safe_next`, which only
+accepts a path on this host; anything else falls back to the view's usual
+destination.
 
 ### 8.1 Notes on specific views
 
@@ -962,18 +1080,55 @@ weights=None)`:
 3. Load rejection counts for the window ending on `day`.
 4. `used_items` = backlog ids already having a non-rejected suggestion on
    that day. Rejected ones are excluded so a refresh can bring them back.
-5. Walk the gaps **largest first**. Big gaps have the most options, so they
-   are spent deliberately rather than letting a short gap take the one item a
-   long gap needed. For each gap, score every unused candidate and keep the
-   highest; ties go to the earlier candidate in default ordering
-   (`-priority, added_at`), so the older item wins.
+5. Keep the gaps in a pool sorted by length and take the **largest first**.
+   Big gaps have the most options, so they are spent deliberately rather
+   than letting a short gap take the one item a long gap needed. On a tie
+   the earlier gap goes first. For each gap, score every unused candidate
+   and keep the highest; ties go to the earlier candidate in default
+   ordering (`-priority, added_at`), so the older item wins.
 6. Build a `Suggestion` with `start_time = gap.start`,
    `end_time = start + minutes`, `minutes`, and the reason. Save it if
    `persist`. Add the item to `used_items`.
-7. Stop after `limit` suggestions (default 3) or when gaps run out.
+7. **Split what is left.** `_remainder_gap` takes the sitting plus a
+   `SESSION_BREAK_MINUTES` (15) break off the front of the gap. If at least
+   `SPLIT_MIN_REMAINDER_MINUTES` (45) remain, the rest goes back into the
+   pool as a gap of its own and can get a suggestion of its own. Less than
+   that is not worth sitting down for again and is left free.
+8. Stop after `limit` suggestions (default 3) or when the pool runs out.
 
-One gap yields at most one suggestion, however long it is. A free Saturday
-with no commitments is one fifteen-hour gap and gets one suggestion.
+So a free Saturday is shared out: the best item at 8:00, a break, the next
+best thing, a break, and so on, up to the limit. A film that fills a gap
+leaves nothing to split. A 120-minute evening gives one 75-minute sitting
+(75 + 15 leaves 30), a 135-minute one gives two.
+
+**Past midnight.** On an overnight schedule (bedtime earlier on the clock
+than the wake-up time) the last gap of a date, if it runs to 23:59, carries
+an `extension`: the free minutes at the start of the next date, up to the
+first busy thing there or bedtime. `Interval.usable` is `minutes` plus the
+extension and is what fitting, gap fill and the pool order use; `minutes`
+is unchanged, so the pages still add up each date on its own and the next
+date still owns its small hours. A sitting that runs past midnight is stored
+on the date it starts with an end time earlier than its start
+(`Suggestion.crosses_midnight`); `busy_blocks` clips it to 23:59 on its own
+date and blocks `00:00` to its end on the next, and nothing is split after
+it. Manual planning from the calendar still stays within one date.
+
+**Community ratings.** `community_ratings(user)` averages other students'
+shared reviews per catalog title. The score adds `community_bonus` times
+`(average - 3) / 2`, so a title rated 5 gets the whole half-step and one
+rated 1 loses it; the user's own priority always outranks the crowd.
+
+**Time of day.** `time_of_day_preferences(user)` tallies the user's own
+answers over the last `time_of_day_memory_days` (60) per media type and part
+of the day (morning before noon, afternoon to 17:00, evening to 21:00,
+night after): accepted and done count for, rejected against, "Later" not at
+all. With at least `time_of_day_min_answers` (2) answers, the score adds
+`time_of_day_bonus` (half a step) times `(for - against) / (for + against)`
+for the gap's part of the day. Films after dinner and chapters before class
+emerge from use rather than being configured.
+
+**Snoozed titles** (`snoozed_until` later than the day) are not candidates
+at all.
 
 ### 9.6 Planning a week
 
@@ -1007,6 +1162,23 @@ each earlier sitting costs `variety_penalty`, so the week mixes titles.
   rows dated today through today + 6, calls `suggest_for_week`, and flashes a
   count ("Planned 9 sessions across 5 days") or the matching empty-state
   message.
+
+### 10.1a Placed and moved by hand
+
+`plan_session` saves an accepted sitting at a chosen day, time and length,
+or with `?move=` rewrites one in place. `cancel` deletes an accepted
+sitting. `stale_sittings` finds accepted sittings whose time has passed
+(yesterday and older; today once the end time is behind us; one that runs
+past midnight waits until tomorrow) for the "Did these happen?" panel,
+which offers `done` and `cancel`.
+
+### 10.1b Watch together
+
+`shared_slots(host, guest, minutes)` walks the next fourteen days and
+intersects the two users' free gaps (each with their planned sittings
+counted as busy), returning the first six stretches at least `minutes`
+long. The host sees only those stretches, not what either person is busy
+with. Accepting an invite puts an accepted sitting on both calendars.
 
 ### 10.2 Responding
 
@@ -1084,7 +1256,35 @@ user with `data-url` pointing at the JSON endpoint. It:
 Network errors and storage errors are swallowed; the worst case is a repeat
 notification.
 
-### 11.3 Settings
+### 11.3 Background push
+
+Off unless `VAPID_PUBLIC_KEY` and `VAPID_PRIVATE_KEY` are both set
+(`settings.PUSH_ENABLED`). `manage.py vapid_keys` prints a pair. With them
+set:
+
+- `base.html` passes the public key, the worker URL, the subscribe URL and a
+  CSRF token to `reminders.js` as data attributes (the key comes from the
+  `planner.context_processors.push` context processor).
+- `reminders.js`, once notifications are allowed, registers `/sw.js`,
+  subscribes with the key (or reuses the browser's existing subscription),
+  and POSTs the result to `push_subscribe`. It does this on every page load,
+  so the server's copy stays fresh, and the reminders card on My week says
+  background reminders are on.
+- `services.push_due_reminders(now, send)` runs the same
+  `upcoming_reminders` as the poller for every user with reminders on and at
+  least one subscription, skips keys already in `SentReminder`, pushes the
+  rest to each of the user's browsers through `_webpush_send` (pywebpush,
+  fifteen-minute TTL), deletes subscriptions the push service reports gone
+  (404 or 410), counts other failures on the subscription, and records the
+  key as sent whatever happened so a broken subscription cannot retry every
+  minute. `send` is replaceable, which is how the tests run it.
+- `manage.py send_push_reminders [--loop] [--interval 60]` calls it. In
+  Docker the `push` compose service runs the loop; it is behind
+  `profiles: ["push"]`, so it only starts with `COMPOSE_PROFILES=push`.
+- The payload is `{title, body, tag, url}`; `sw.js` shows it with
+  `showNotification` and a click focuses or opens `/dashboard/`.
+
+### 11.4 Settings
 
 `NotificationSettingsForm` edits `notify_enabled` and `notify_lead_minutes`
 (1–120) on the My week page.
@@ -1094,10 +1294,12 @@ notification.
 ## 12. Progress statistics
 
 `progress_stats(user, today=None, days=30)` builds everything the Progress
-page needs. Its data source is `Suggestion` rows with status `done`; time is
-attributed to the local date of `responded_at`, falling back to the planned
-`date` if that is null. Minutes typed into a backlog item by hand have no
-date and are not counted. Sessions dated after today are ignored.
+page needs. It has two data sources: `Suggestion` rows with status `done`,
+attributed to the local date of `responded_at` (falling back to the planned
+`date` if that is null), and `TimeLog` rows on their own `date`. Both count
+as a session. Minutes typed straight into a backlog item's "already done"
+box still have no date and are not counted. Anything dated after today is
+ignored.
 
 It computes:
 
@@ -1108,6 +1310,9 @@ It computes:
   read zero first thing in the morning. It reaches zero only after a full
   day with nothing. The best streak is the longest run of consecutive active
   days ever.
+- **This week** (Monday to today) as `week_minutes`, against the profile's
+  `weekly_goal_minutes` as `goal_percent` and `goal_met`, for the card on
+  Progress and the bar on Today.
 - **The 30-day chart**: a list of `{date, minutes, label, height, is_today,
   is_best, label_align}` for each day ending today. `_axis(top)` picks a
   round tick step from `[15, 30, 60, 120, 180, 240, 360, 480, 720, 960]`
@@ -1132,13 +1337,34 @@ and `data-tip-value`, repeating what the table and legend already say.
 
 ---
 
+## 12a. Semester view
+
+`semester_overview(user, start, weeks)` sums fixed busy time per week from
+this Monday: recurring blocks minus exceptions, plus commitments clipped per
+date, in three queries. Planned sittings are left out on purpose, since the
+page is about the shape of the term. It returns each week's minutes, days,
+commitments and share of the busiest week, plus the busiest and lightest
+weeks and the average, for the bars on `/semester/`.
+
 ## 13. Calendar
 
 `month_grid(user, year, month)` returns up to six weeks of seven cells,
-Sunday first (`lead = (first.weekday() + 1) % 7`). All accepted and done
-suggestions in the 42-day span are fetched in one query and bucketed by
-date. Each cell is `{date, in_month, is_today, planned}`. If the sixth row
-contains no day of the month it is dropped.
+Sunday first (`lead = (first.weekday() + 1) % 7`). Three queries cover the
+whole grid: accepted and done suggestions in the 42-day span, commitments
+overlapping it (`_commitments_by_day`, which lists a commitment on every
+date it touches with only that date's minutes, the same clipping
+`busy_blocks` does), and the recurring blocks, summed per weekday. Each cell
+is `{date, in_month, is_today, planned, commitments, entries, busy_minutes,
+busy_label, recurring_count}`. `entries` is what the cell draws, commitments
+first (amber edge) then planned sittings (green edge), three shown and
+"+N more". `busy_label` is the day's recurring plus commitment time, so the
+grid reads as how busy a day is and not only as what was planned from the
+backlog. If the sixth row contains no day of the month it is dropped.
+
+The day panel offers two ways in: **Plan something** opens `plan_session`
+for that date, prefilled with the first free gap and up to an hour, and
+**+ Commitment** opens `add_commitment?date=` with `next` pointing back at
+the calendar.
 
 `day_plan(user, day)` returns `{date, busy, free, planned, pending}` for the
 side panel and the dashboard, where `busy` excludes planned sessions (they
@@ -1163,6 +1389,41 @@ week (two lectures on Tuesday and Thursday, library shifts Monday, Wednesday
 and Friday, a Wednesday study group, Saturday gym), adds six backlog items at
 varied priorities, and marks "Project Hail Mary" in progress with 180
 minutes done so the in-progress bonus is exercised.
+
+### 14.1a Looking a title up on the spot
+
+Each source has `search(query, limit)`: Open Library's `search.json` by
+title, TMDB's `/search/{movie,tv}`, RAWG's `/games?search=`. Each goes
+through the same `_record` as the bulk import, so the same length and genre
+rules apply. `lookup_title(query, keys, fetcher_factory, media_type="")`
+asks every source that has a key (books need none), saves the records with
+`save_record`, and returns the catalog rows plus the names of sources that
+raised `ImportFailure`. The Discover page shows the button whenever a search
+term is present and names the sources that are set up; the view redirects
+back to the same search.
+
+### 14.1b Bringing in a watchlist or a calendar
+
+`planner/imports.py` reads two kinds of file with no dependencies.
+
+`read_ics` unfolds the lines, walks each `VEVENT`, and turns a weekly or
+daily `RRULE` (interval 1, not yet past its `UNTIL`) into one recurring
+block per `BYDAY` weekday, with the kind guessed from the summary (a course
+code or "lecture" is a class, "shift" is work, "study" or "lab" is study).
+Events without a rule become commitments if they end after now and start
+within a year. All-day events, other repeat frequencies, intervals above
+one and anything already over are counted in `skipped` by reason. Times
+honour `TZID` and `Z` and are converted to the site's time zone.
+`apply_schedule` creates what is not already there.
+
+`read_media_csv` recognises a Letterboxd export by its `Letterboxd URI`
+column (every row a film; a `Rating` column means watched) and a Goodreads
+export by `Title`, `Author` and `Exclusive Shelf` (shelves map to backlog,
+in progress and completed; pages times 1.3 gives the minutes; `My Rating`
+is kept). `apply_media` matches each row to the catalog by title and type,
+preferring the same year, else adds a hand-typed item with a default length,
+marks completed rows finished, and saves a Goodreads rating as a private
+review.
 
 ### 14.2 The importer
 
@@ -1354,16 +1615,18 @@ Pages under `templates/planner/`:
 | Template | Page |
 | --- | --- |
 | `home.html` | Landing page for visitors. |
-| `dashboard.html` | Today: stat cards (free today, longest gap, backlog count, planned today), suggestions, planned sessions, the day's timeline of busy and free, a backlog preview, coming up. |
+| `dashboard.html` | Today: stat cards (free today, longest gap, backlog count, planned today), the weekly goal bar, suggestions, "Did these happen?", planned sessions, the day's timeline of busy and free, a backlog preview, coming up. Each is a panel the user can hide (`_hide_panel.html` in its header) or pick in the "Customize this page" box at the bottom. |
+| `settings.html`, `delete_account.html` | The settings page (with API tokens) and the deletion confirmation. |
+| `semester.html`, `watch_together.html` | The term overview and the two-step invite form. |
 | `weekly_schedule.html` | My week: seven-day strip with Plan my week and Add all, recurring blocks grouped by weekday, upcoming commitments, and the waking hours, reminders and add-block forms. |
-| `calendar.html` | Month grid plus day panel plus per-day suggest button. |
+| `calendar.html` | Month grid (commitments and planned sittings in the cells, busy time per day) plus day panel with Plan something, + Commitment and the per-day suggest button. |
 | `discover.html` | Filter form, result cards, pager. |
 | `catalog_detail.html` | Item details, "Fits today?", add/edit/remove. |
 | `backlog.html` | Status filter chips, item rows with an inline priority `<select>` that submits on change. |
-| `form.html` | Generic add/edit form used for backlog items, recurring blocks and commitments. |
+| `form.html` | Generic add/edit form used for backlog items, recurring blocks, commitments, logging time and planning a sitting. Takes optional `intro`, `next_url`, `cancel_href` and `submit_label`. |
 | `stats.html` | Progress page with the HTML/CSS bar chart, type breakdown bar, legend, in-progress and recently finished. |
 | `reviews.html`, `review_form.html` | Review list and editor. |
-| `_suggestion.html` | The suggestion card partial. Shows accept/reject for pending, "Mark done" for accepted, and a "Completed" pill for done. Takes `suggestion` and `next_url`. |
+| `_suggestion.html` | The suggestion card partial. Shows accept/reject for pending, "Mark done", "Move" and "Remove" for accepted, and a "Completed" pill for done, plus the episode position and a "past midnight" note. Takes `suggestion` and `next_url`. |
 
 `templates/registration/` holds `login.html`, `register.html`,
 `verify_pending.html`, `verify_invalid.html` and the plain-text
@@ -1375,6 +1638,26 @@ no database, so it cannot itself fail.
 Forms are rendered with `{{ form.as_p }}`, which is why the CSS styles bare
 `input`, `select`, `textarea`, `label`, `.helptext` and `ul.errorlist`
 elements rather than classes on inputs.
+
+### 16.1a Phone layout and the theme
+
+The navigation is a CSS grid: one row on a laptop, and on a phone the brand
+and the sign-out form on the first row with the page links on a second row
+that scrolls sideways (`.nav-strip`, scrollbar hidden). The username is
+hidden below 640px. Calendar cells show a dot instead of the busy label on
+phones, buttons never wrap mid-word, and small buttons have a 32px minimum
+height for tapping.
+
+Two palettes live in `static/src/app.css`. The `@theme` block is the dark
+palette and the default. A light palette overrides the same custom
+properties under `@media (prefers-color-scheme: light)` for `:root:not([data-theme="dark"])`
+and again for `:root[data-theme="light"]`, and sets `color-scheme` so native
+pickers follow. Every Tailwind utility reads `var(--color-…)`, so the
+override reaches everything. A one-line script in `<head>` applies a saved
+choice from `localStorage` (`mediaflow-theme`) before the first paint;
+`static/js/theme.js` drives the System / Light / Dark buttons in the footer
+and on Settings and keeps `aria-pressed` in step. Two `theme-color` metas
+cover the browser chrome in each scheme.
 
 ### 16.2 CSS
 
@@ -1513,6 +1796,13 @@ volume.
 
 ### 19.3 Overlays
 
+Two more overlays joined in Iteration 4. `docker-compose.postgres.yml` adds
+a `mediaflow-db` PostgreSQL 16 container on its own volume, with a
+`pg_isready` health check the web (and push) services wait for, and sets
+`DATABASE_URL` for them; it needs `POSTGRES_PASSWORD` in `.env`. The base
+file also gained a `push` service, the same image running
+`send_push_reminders --loop`, behind the `push` compose profile.
+
 Each overlay is layered on the base with `-f` flags or by setting
 `COMPOSE_FILE` in `.env`. They are alternatives; use one.
 
@@ -1587,8 +1877,10 @@ run on Windows.
 
 ### 20.1 The suite
 
-`planner/tests.py` holds 341 tests in one file, run with
-`python manage.py test` (about 110 seconds). Test classes map to subsystems:
+`planner/tests.py` holds 646 tests in one file, run with
+`python manage.py test` (about four minutes), and
+`planner/tests_e2e.py` five browser tests that need Playwright (see the
+README) and are skipped without it. Test classes map to subsystems:
 
 | Area | Classes |
 | --- | --- |
@@ -1602,6 +1894,10 @@ run on Windows.
 | Configuration | `EnvFileTests`, `EnvHelperTests`, `SettingsTests`, `DeployCheckTests`, `ProductionSmokeTests` |
 | Catalog import | `ImportHelperTests`, `HttpFetcherTests`, `BookSourceTests`, `MovieSourceTests`, `TvSourceTests`, `GameSourceTests`, `SaveRecordTests`, `ImportCommandTests`, `TmdbFeedTests`, `BookResumeTests`, `GameResumeTests`, `SkipExistingCommandTests` |
 | Containers | `ContainerHealthCheckTests`, `ContainerFilesTests` |
+| Iteration 3 | `OvernightScheduleTests`, `PasswordResetTests`, `WalkthroughTests`, `RichReviewTests`, `PriorityFormatTests`, `ColdStartFlowTests` |
+| Iteration 4 | `DashboardPanelTests`, `CalendarGridTests`, `PlanSessionTests`, `CommitmentFromCalendarTests`, `GapSplittingTests`, `DisplayNameTests`, `TimeLogTests`, `StaffWithoutProfileTests`, `CatalogLockTests`, `SeedCatalogTests`, `DatabaseUrlTests`, `PushEndpointTests`, `PushSenderTests`, `PushCommandTests`, `DeploymentFilesTests`, `MoveAndCancelTests`, `FollowUpTests`, `BlockExceptionTests`, `UnitTrackingTests`, `WeeklyGoalTests`, `CommunityScoringTests`, `MidnightSittingTests`, `SettingsPageTests`, `ExportAndDeleteTests`, `InstallableAppTests`, `IcsReadTests`, `ScheduleImportViewTests`, `MediaCsvReadTests`, `MediaImportApplyTests`, `LookupTests`, `LookupViewTests` |
+| Polish and the last features | `AccessibilityTests`, `ThemeAndNavTests`, `SnoozeTests`, `TimeOfDayTests`, `SemesterViewTests`, `SeriesTests`, `WatchTogetherTests`, `ApiTests` |
+| Browser (`tests_e2e.py`) | `BrowserFlowTests`: sign-up and confirmation, suggest and accept from the calendar then mark done, plan a sitting from a day, hide and restore a Today panel, log time. Skipped unless Playwright is installed. |
 
 Conventions worth knowing:
 
@@ -1638,27 +1934,53 @@ in parallel:
 
 ## 21. Known limitations and future work
 
-- **Reminders need an open tab.** True background push needs a service
-  worker, VAPID keys, the `pywebpush` package, and a server-side scheduler.
-- **One suggestion per gap.** A free day with no commitments is one long gap
-  and gets one proposal. Splitting long gaps would need a policy for where
-  to cut.
-- **An overnight day is split at midnight.** With a bedtime past midnight
-  the free time on each date is two stretches, so a sitting cannot cross
-  midnight. A film that only fits from 23:00 to 01:00 is not offered.
-- **Shared reviews show the username.** There is no display name or
-  anonymous option; "Share with other students" is the only control.
-- **SQLite and a single container.** Fine for the class scale; a second
-  app container would corrupt the file. Moving to PostgreSQL means adding a
-  driver and a `DATABASE_URL` style setting.
+- **Background push is opt-in and per browser.** It works once the VAPID
+  keys are set and the sender runs; without them reminders still need an
+  open tab. iOS needs the site added to the home screen first. There is no
+  way yet to see or remove subscribed browsers from the app itself, only
+  from the admin.
+- **Long gaps are cut by a fixed rule.** A sitting, a fifteen-minute break,
+  then the next best thing, as long as at least 45 minutes remain. There is
+  no notion of meals or of a sitting the user would rather have later in
+  the day.
+- **A sitting placed by hand stays within one date**, even on an overnight
+  schedule; only the planner's own suggestions run past midnight.
+- **Watch together is two people, by username.** There is no friends list,
+  no group invites, and the guest's name has to be typed exactly. The host
+  learns which stretches are free for both, which says a little about the
+  guest's schedule.
+- **Series data is thin.** Only films imported from TMDB carry a series;
+  books and games need it entered in the admin.
+- **The API is read-only.** Accepting a suggestion or logging time still
+  goes through the pages.
+- **The light palette was checked by eye, not by a contrast tool,** on
+  Today and the calendar at phone and laptop widths. The chart colours are
+  shared between the two palettes.
+- **Episode positions are arithmetic.** They come from minutes divided by
+  the unit length, so a show with episodes of different lengths is
+  approximate unless its unit length is set on the item.
+- **Calendar import handles weekly and daily repeats only.** Every-other-week
+  classes, monthly events and anything past its end date are skipped and
+  counted, not guessed.
+- **Watchlist import matches by title.** Two films with the same title and
+  no year match the first catalog row; the rest are added by name with a
+  default length until edited.
+- **On-demand lookup runs inside the request**, so it takes a few seconds
+  and depends on the sources answering; a source that fails is named.
+- **SQLite by default.** Fine for the class scale. The `push` service shares
+  the file with the web container, which is one more writer once a minute;
+  anything beyond that should move to the PostgreSQL overlay, which is
+  configured but has not been run in production.
 - **Email address is not proven to exist** beyond the verification link
   itself; the domain check is a suffix match.
-- **Imported catalog edits are overwritten** on the next import for the
-  same source id.
+- **Catalog edits are only kept when made in the admin**, which sets the
+  "Keep my edits" flag. Rows changed any other way are still refreshed by
+  the next import.
 - **Catalog is per database.** Every teammate and every deployment runs the
   import themselves; keys are personal.
 - **No API.** Everything is HTML forms except the reminders JSON.
-- **Minutes typed by hand are not charted**, because they carry no date.
+- **The "minutes already done" box on an item is not charted**, because it
+  carries no date. Log time from the backlog instead; that does.
 - **Game playtimes are crowd-reported** by RAWG users and sometimes wrong.
   Book genres come from Open Library subject tags and are approximate.
 

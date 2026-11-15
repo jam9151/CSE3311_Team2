@@ -107,6 +107,8 @@ class Record:
     description: str = ""
     release_date: date | None = None
     rating: float | None = None
+    # The series or collection, when the source knows one. Blank otherwise.
+    series: str = ""
 
 
 class HttpFetcher:
@@ -190,6 +192,10 @@ class Source:
             return [fetch(item) for item in items]
         with ThreadPoolExecutor(max_workers=self.workers) as pool:
             return list(pool.map(fetch, items))
+
+    def search(self, query, limit):  # pragma: no cover - overridden
+        """Records matching a title typed by a user, best first. Used by the Discover lookup."""
+        return []
 
     def records(self, limit):  # pragma: no cover - overridden
         raise NotImplementedError
@@ -309,6 +315,26 @@ class BookSource(Source):
                 if taken >= per_subject:
                     break
 
+    def search(self, query, limit):
+        data = self.fetcher.get_json(
+            f"{self.API}/search.json",
+            {
+                "title": query,
+                "limit": limit,
+                "fields": "key,title,author_name,first_publish_year,number_of_pages_median,ratings_average,ratings_count,subject",
+            },
+        )
+        found = []
+        for doc in (data or {}).get("docs") or []:
+            if not doc.get("key"):
+                continue
+            record = self._record(doc, best_book_label(doc.get("subject")) or "")
+            if record is not None:
+                found.append(record)
+            if len(found) >= limit:
+                break
+        return found
+
     def _record(self, doc, genre):
         title = (doc.get("title") or "").strip()
         authors = doc.get("author_name") or []
@@ -416,6 +442,16 @@ class TmdbSource(Source):
             if not got_any:
                 return
 
+    def search(self, query, limit):
+        data = self._get(f"/search/{self.kind}", query=query, language="en-US", page=1)
+        ids = [row["id"] for row in (data or {}).get("results") or [] if row.get("id")][:limit]
+        found = []
+        for item_id, details in zip(ids, self.fetch_each(self._fetch, ids)):
+            record = self._record(item_id, details)
+            if record is not None:
+                found.append(record)
+        return found
+
     def _fetch(self, item_id):  # pragma: no cover - overridden
         raise NotImplementedError
 
@@ -443,6 +479,10 @@ class MovieSource(TmdbSource):
         crew = (data.get("credits") or {}).get("crew") or []
         director = next((p.get("name") for p in crew if p.get("job") == "Director"), "")
         genres = data.get("genres") or []
+        collection = (data.get("belongs_to_collection") or {}).get("name") or ""
+        # TMDB names them "Dune Collection"; the word adds nothing here.
+        if collection.endswith(" Collection"):
+            collection = collection[: -len(" Collection")]
         return Record(
             source="tmdb",
             source_id=f"movie-{item_id}",
@@ -454,6 +494,7 @@ class MovieSource(TmdbSource):
             description=tidy_description(data.get("overview")),
             release_date=parse_date(data.get("release_date")),
             rating=one_decimal(data.get("vote_average")),
+            series=clip(collection, 160),
         )
 
 
@@ -560,6 +601,18 @@ class GameSource(Source):
                 if produced >= limit:
                     return
 
+    def search(self, query, limit):
+        data = self.fetcher.get_json(
+            f"{self.API}/games", {"key": self.key, "search": query, "page_size": limit, "search_precise": "true"}
+        )
+        rows = [row for row in (data or {}).get("results") or [] if row.get("id") and row.get("name")][:limit]
+        found = []
+        for row, detail in zip(rows, self.fetch_each(self._fetch, rows)):
+            record = self._record(row, detail)
+            if record is not None:
+                found.append(record)
+        return found
+
     def _fetch(self, row):
         return self.fetcher.get_json(f"{self.API}/games/{row['id']}", {"key": self.key}) or {}
 
@@ -595,20 +648,24 @@ SOURCES = {cls.name: cls for cls in (MovieSource, TvSource, BookSource, GameSour
 # ---------------------------------------------------------------- saving
 
 
-FIELDS = ["title", "media_type", "genre", "creator", "description", "release_date", "rating", "typical_minutes"]
+FIELDS = ["title", "media_type", "genre", "creator", "description", "release_date", "rating", "typical_minutes", "series"]
 
 
 def save_record(record):
-    """Write one Record. Returns "created", "updated" or "duplicate".
+    """Write one Record. Returns "created", "updated", "kept" or "duplicate".
 
-    A row is matched by where it came from, so a second run refreshes it.
-    Anything already in the catalog from the hand-entered seed data, with the
-    same title, type and year, wins and the imported copy is dropped.
+    A row is matched by where it came from, so a second run refreshes it,
+    unless someone edited that row by hand (CatalogItem.locked), in which case
+    it is kept as they left it. Anything already in the catalog from the
+    hand-entered seed data, with the same title, type and year, wins and the
+    imported copy is dropped.
     """
     values = {field: getattr(record, field) for field in FIELDS}
 
     existing = CatalogItem.objects.filter(source=record.source, source_id=record.source_id).first()
     if existing:
+        if existing.locked:
+            return "kept"
         for field, value in values.items():
             setattr(existing, field, value)
         existing.save()
@@ -621,3 +678,50 @@ def save_record(record):
 
     CatalogItem.objects.create(source=record.source, source_id=record.source_id, **values)
     return "created"
+
+
+def saved_item(record):
+    """The catalog row a record ended up as, whichever of save_record's outcomes it had."""
+    item = CatalogItem.objects.filter(source=record.source, source_id=record.source_id).first()
+    if item is None:
+        item = CatalogItem.objects.filter(source="", media_type=record.media_type, title__iexact=record.title).first()
+    return item
+
+
+def source_keys(environ):
+    """{source name: key or ""} from the environment, for sources that are usable right now."""
+    keys = {}
+    for name, source_class in SOURCES.items():
+        key = environ.get(source_class.key_env, "").strip() if source_class.key_env else ""
+        if source_class.key_env and not key:
+            continue
+        keys[name] = key
+    return keys
+
+
+def lookup_title(query, keys, fetcher_factory, per_source=3, media_type=""):
+    """Ask every usable source for `query` right now and save what comes back.
+
+    `keys` is source_keys(); `fetcher_factory(source_class)` builds the
+    fetcher, so tests can hand in a fake. Returns (items, failures): the
+    catalog rows now matching, newest first, and the names of sources that
+    raised an ImportFailure.
+    """
+    items, failures = [], []
+    for name, source_class in SOURCES.items():
+        if name not in keys:
+            continue
+        if media_type and source_class.media_type != media_type:
+            continue
+        source = source_class(fetcher_factory(source_class), keys[name])
+        try:
+            records = source.search(query, per_source)
+        except ImportFailure:
+            failures.append(name)
+            continue
+        for record in records:
+            save_record(record)
+            item = saved_item(record)
+            if item is not None and item not in items:
+                items.append(item)
+    return items, failures

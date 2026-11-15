@@ -3,3 +3,7 @@ Django>=5.2,<6.0
 whitenoise>=6.7,<7
 # The production web server. It does not run on Windows, so only install it elsewhere.
 gunicorn>=22; sys_platform != "win32"
+# PostgreSQL driver, only used when DATABASE_URL points at a postgres:// server.
+psycopg[binary]>=3.2,<4
+# Background push reminders (VAPID signing and the push protocol). Only used when the keys are set.
+pywebpush>=2.0,<3

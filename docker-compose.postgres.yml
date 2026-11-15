@@ -1,0 +1,43 @@
+# PostgreSQL instead of the SQLite file. Add it to COMPOSE_FILE alongside the
+# base file and whichever proxy layer you use, for example:
+#
+#   COMPOSE_FILE=docker-compose.yml:docker-compose.proxy.yml:docker-compose.postgres.yml
+#   POSTGRES_PASSWORD=a-long-random-password
+#
+# The app then reads DATABASE_URL, which wins over DATABASE_PATH, and the
+# SQLite volume is simply left unused. Moving existing data across is a
+# dumpdata/loaddata job; see docs/runbook.md.
+
+services:
+  web:
+    environment:
+      DATABASE_URL: postgres://mediaflow:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env for the postgres layer}@db:5432/mediaflow
+    depends_on:
+      db:
+        condition: service_healthy
+
+  push:
+    environment:
+      DATABASE_URL: postgres://mediaflow:${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env for the postgres layer}@db:5432/mediaflow
+    depends_on:
+      db:
+        condition: service_healthy
+
+  db:
+    image: postgres:16-alpine
+    container_name: mediaflow-db
+    environment:
+      POSTGRES_DB: mediaflow
+      POSTGRES_USER: mediaflow
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env for the postgres layer}
+    volumes:
+      - mediaflow-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mediaflow -d mediaflow"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  mediaflow-postgres:

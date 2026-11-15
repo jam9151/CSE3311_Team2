@@ -1,0 +1,47 @@
+{% extends "base.html" %}
+{% block title %}Watch together · {{ item.title }} · MediaFlow{% endblock %}
+
+{% block content %}
+<section class="card mx-auto my-8 max-w-lg">
+  <p class="eyebrow">Watch together</p>
+  <h1 class="text-2xl font-bold tracking-tight">{{ item.title }}</h1>
+  <p class="mb-5 text-sm text-muted">
+    <span class="pill pill-{{ item.media_type }}">{{ item.get_media_type_display }}</span>
+    {{ item.typical_minutes }} min &middot; the planner looks for a stretch that long free for both of you in the next two weeks.
+  </p>
+
+  <form method="post">
+    {% csrf_token %}
+    {{ form.as_p }}
+    {% if not searched %}
+      <div class="flex gap-2">
+        <button class="btn">Find a time</button>
+        <a class="btn btn-ghost" href="{{ item.get_absolute_url }}">Cancel</a>
+      </div>
+    {% else %}
+      <h2 class="mb-2 text-lg font-semibold">Times free for you and {{ guest.username }}</h2>
+      {% if slots %}
+        <div class="mb-4 grid gap-2" role="radiogroup" aria-label="Pick a time">
+          {% for value, day, start, end in slots %}
+            <label class="choice-chip justify-between">
+              <span class="flex items-center gap-2">
+                <input type="radio" name="slot" value="{{ value }}" {% if forloop.first %}checked{% endif %}>
+                <span>{{ day|date:"l, F j" }}</span>
+              </span>
+              <span class="tabular-nums text-muted">{{ start|time:"g:i A" }} – {{ end|time:"g:i A" }}</span>
+            </label>
+          {% endfor %}
+        </div>
+        <div class="flex gap-2">
+          <button class="btn">Send the invite</button>
+          <a class="btn btn-ghost" href="{{ item.get_absolute_url }}">Cancel</a>
+        </div>
+      {% else %}
+        <p class="empty mb-4">No stretch of {{ item.typical_minutes }} minutes is free for both of you in the next two weeks. Try a shorter title, or ask them to skip something.</p>
+        <a class="btn btn-ghost" href="{{ item.get_absolute_url }}">Back</a>
+      {% endif %}
+    {% endif %}
+  </form>
+  <p class="mt-4 text-xs text-muted">Only the times both of you are free are shown, not what either of you is busy with.</p>
+</section>
+{% endblock %}

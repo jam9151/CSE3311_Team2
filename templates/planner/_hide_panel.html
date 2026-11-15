@@ -1,0 +1,6 @@
+{# Needs: key (a DASHBOARD_PANELS key). The small "Hide" control in a Today panel's header. #}
+<form method="post" action="{% url 'dashboard_panels' %}" class="inline">
+  {% csrf_token %}
+  <input type="hidden" name="hide" value="{{ key }}">
+  <button class="btn-link text-xs no-underline hover:underline" title="Hide this panel from Today" aria-label="Hide this panel">Hide</button>
+</form>

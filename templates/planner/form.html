@@ -4,12 +4,14 @@
 {% block content %}
 <section class="card mx-auto my-8 max-w-md">
   <h1 class="mb-4 text-2xl font-bold tracking-tight">{{ heading }}</h1>
-  <form method="post">
+  {% if intro %}<p class="mb-4 text-sm text-muted">{{ intro }}</p>{% endif %}
+  <form method="post"{% if multipart %} enctype="multipart/form-data"{% endif %}>
     {% csrf_token %}
+    {% if next_url %}<input type="hidden" name="next" value="{{ next_url }}">{% endif %}
     {{ form.as_p }}
     <div class="flex gap-2">
-      <button class="btn">Save</button>
-      <a class="btn btn-ghost" href="{% url cancel_url %}">Cancel</a>
+      <button class="btn">{{ submit_label|default:"Save" }}</button>
+      <a class="btn btn-ghost" href="{% if cancel_href %}{{ cancel_href }}{% else %}{% url cancel_url %}{% endif %}">Cancel</a>
     </div>
   </form>
 </section>

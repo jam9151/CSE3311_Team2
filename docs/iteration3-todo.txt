@@ -1,0 +1,36 @@
+MediaFlow - Iteration 3 - remaining to-dos (as of 2026-11-01)
+
+1. Confirm the live site is on the new build.
+   Check that https://mediaflow.jessemcnary.com/accounts/login/ shows
+   "Forgot your password?" and that docker ps reports mediaflow-web healthy.
+
+2. Run the cold-start user test.
+   Two or three classmates, following docs/iteration3-cold-start-test.md, on
+   the live site with real email. Fill in the results sheet and the four
+   post-task questions for each tester.
+
+3. Fix what the testers hit.
+   Anything two or more testers struggle with is a bug for this iteration,
+   with a test added per fix. Likely spots: finding Mark done on Today,
+   reading the overnight help text, and understanding the review sharing
+   checkbox.
+
+4. Redeploy after those fixes.
+   On megatron, in /home/kirk-admin/projects/CSE3311_Team2:
+   git pull, then
+   docker compose -f docker-compose.yml -f docker-compose.proxy.yml up --build -d
+
+5. Write the Iteration 3 report.
+   Same shape as the Iteration 2 document: what changed (see
+   docs/iteration3-changes.txt), the test count (403), the user-test results,
+   and known limitations. Rebuild the PDF if one is handed in.
+
+6. Decide on the two txt files in docs/.
+   Commit iteration3-changes.txt and iteration3-todo.txt with the report, or
+   delete them.
+
+NOT ITERATION 3 (longer-term, only if the course asks)
+- Background push reminders (service worker, VAPID keys, pywebpush, a timer)
+- Splitting long free gaps so a free day gets more than one suggestion
+- PostgreSQL for a multi-container deployment
+- Browser-level end-to-end tests

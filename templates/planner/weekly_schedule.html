@@ -15,7 +15,11 @@
   <section class="card">
     <div class="card-head">
       <h2>The next seven days</h2>
-      <a class="text-sm" href="{% url 'add_commitment' %}">+ One-off commitment</a>
+      <span class="flex flex-wrap items-center gap-3 text-sm">
+        <a href="{% url 'semester' %}" title="Busy hours week by week for the term">Semester view</a>
+        <a href="{% url 'import_schedule' %}" title="Bring in a class schedule or calendar as an .ics file">Import a calendar</a>
+        <a href="{% url 'add_commitment' %}">+ One-off commitment</a>
+      </span>
     </div>
 
     <div class="mb-3 flex flex-wrap items-center gap-2">
@@ -83,6 +87,22 @@
       <p class="empty">No recurring blocks yet. Add your first one on the right.</p>
     {% endfor %}
 
+    {% if exceptions %}
+      <div class="card-head mt-6"><h2>Skipped this time</h2></div>
+      <p class="mb-2 text-xs text-muted">Recurring blocks that do not happen on one date. Skip one from a day on the calendar.</p>
+      {% for exception in exceptions %}
+        <div class="row">
+          <div class="flex-1">
+            <strong>{{ exception.block.label }}</strong>
+            <p class="text-xs text-muted">{{ exception.date|date:"D, M j" }} &middot; {{ exception.block.start_time|time:"g:i A" }}–{{ exception.block.end_time|time:"g:i A" }}</p>
+          </div>
+          <form method="post" action="{% url 'unskip_block' exception.pk %}">
+            {% csrf_token %}<button class="btn-link text-xs">restore</button>
+          </form>
+        </div>
+      {% endfor %}
+    {% endif %}
+
     {% if commitments %}
       <div class="card-head mt-6"><h2>One-off commitments</h2></div>
       {% for commitment in commitments %}
@@ -113,6 +133,15 @@
     </section>
 
     <section class="card">
+      <div class="card-head"><h2>Weekly goal</h2></div>
+      <form method="post">
+        {% csrf_token %}
+        {{ goal_form.as_p }}
+        <button name="save_goal" value="1" class="btn btn-secondary">Save goal</button>
+      </form>
+    </section>
+
+    <section class="card">
       <div class="card-head"><h2>Reminders</h2></div>
       <form method="post">
         {% csrf_token %}
@@ -122,7 +151,7 @@
       <div class="mt-3 text-sm text-muted">
         <p data-notification-status>Checking browser support&hellip;</p>
         <button type="button" class="btn btn-secondary mt-2" data-enable-notifications hidden>Allow browser notifications</button>
-        <p class="mt-2 text-xs">Reminders appear while MediaFlow is open in a browser tab.</p>
+        <p class="mt-2 text-xs" data-push-note>Reminders appear while MediaFlow is open in a browser tab.</p>
       </div>
     </section>
 
